@@ -1,7 +1,7 @@
 export const ALLERGENS = ['えび','かに','くるみ','小麦','そば','卵','乳','落花生','アーモンド','あわび','いか','いくら','オレンジ','カシューナッツ','キウイフルーツ','牛肉','ごま','さけ','さば','大豆','鶏肉','バナナ','豚肉','マカダミアナッツ','もも','やまいも','りんご','ゼラチン','その他'] as const;
 export type AllergyProfile = { status:'unanswered'|'none'|'selected'; items:string[]; note:string; consent:boolean };
 export const EMPTY_ALLERGY: AllergyProfile = {status:'unanswered',items:[],note:'',consent:false};
-export type Reservation = { venueName:string; address:string; date:string; time:string; people:number; price:number; status:'planning'|'confirmed'|'cancelled'; bookingReference:string; note:string; website:string };
+export type Reservation = { venueName:string; address:string; date:string; time:string; people:number; price:number; status:'planning'|'confirmed'|'cancelled'; bookingReference:string; shareBookingReference?:boolean; note:string; website:string };
 /** 出欠。未回答が既定で、答えるまで人数に数えない（fail-closed）。 */
 export type Rsvp = 'pending'|'yes'|'no';
 export const RSVP_ORDER: readonly Rsvp[] = ['yes','no','pending'];

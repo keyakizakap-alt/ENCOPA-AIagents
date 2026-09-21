@@ -12,7 +12,12 @@ export function reservation(value:unknown):Reservation {
  if(!Number.isInteger(v.people)||Number(v.people)<2||Number(v.people)>200||!Number.isInteger(v.price)||Number(v.price)<0||Number(v.price)>100000)throw new HttpError(400,'人数は2〜200名、1人分の費用は0〜100000円で入力してください。');
  if(!['planning','confirmed','cancelled'].includes(String(v.status)))throw new HttpError(400,'予約状況を選択してください。');
  const website=short(v.website??'',500,'店舗URL',false);if(website){try{const u=new URL(website);if(!['https:','http:'].includes(u.protocol)||u.username||u.password)throw 0}catch{throw new HttpError(400,'店舗URLはhttpsまたはhttpで入力してください。')}}
- return {venueName:short(v.venueName,100,'店名'),address:short(v.address,200,'住所'),date,time,people:Number(v.people),price:Number(v.price),status:v.status as Reservation['status'],bookingReference:short(v.bookingReference??'',100,'予約番号',false),note:short(v.note??'',1000,'連絡事項',false),website};
+ return {venueName:short(v.venueName,100,'店名'),address:short(v.address,200,'住所'),date,time,people:Number(v.people),price:Number(v.price),status:v.status as Reservation['status'],bookingReference:short(v.bookingReference??'',100,'予約番号',false),shareBookingReference:v.shareBookingReference===true,note:short(v.note??'',1000,'連絡事項',false),website};
+}
+function reservationForViewer(value:unknown,isOwner:boolean):Reservation {
+ const stored=value as Reservation;
+ const normalized={...stored,shareBookingReference:stored.shareBookingReference===true};
+ return isOwner||normalized.shareBookingReference?normalized:{...normalized,bookingReference:''};
 }
 export function allergy(value:unknown):AllergyProfile {
  if(!value||typeof value!=='object')throw new HttpError(400,'アレルギーの入力を確認してください。');const v=value as Record<string,unknown>;
@@ -35,6 +40,7 @@ export async function snapshot(req:NextRequest,id:string){
  const [members,messages]=await Promise.all([db.execute({sql:'SELECT id,name,role,allergy,rsvp,affiliation,answered_at FROM encopa_members WHERE group_id=? ORDER BY created_at',args:[id]}),db.execute({sql:'SELECT * FROM (SELECT rowid AS seq,* FROM encopa_messages WHERE group_id=? ORDER BY created_at DESC,rowid DESC LIMIT 100) ORDER BY created_at,seq',args:[id]})]);
  // 出欠と所属はグループ内に公開する情報。アレルギーだけは本人と幹事に限って返す。
  const present=(m:Record<string,unknown>)=>({rsvp:String(m.rsvp??'pending') as Rsvp,affiliation:String(m.affiliation??''),answeredAt:Number(m.answered_at??0)});
- return {id,title:g.title,reservation:openJson(String(g.reservation)),version:Number(g.version),expiresAt:Number(g.expires_at),me:{id:me.id,name:me.name,role:me.role,allergy:openJson(String(me.allergy)),...present(me)},members:members.rows.map(m=>({id:m.id,name:m.name,role:m.role,...present(m),...(me.role==='owner'?{allergy:openJson(String(m.allergy))}:{})})),messages:messages.rows.map(m=>({id:m.id,authorId:m.author_id,author:m.author,kind:m.kind,text:m.text,reservation:m.reservation?openJson(String(m.reservation)):null,createdAt:Number(m.created_at)}))};
+ const isOwner=me.role==='owner';
+ return {id,title:g.title,reservation:reservationForViewer(openJson(String(g.reservation)),isOwner),version:Number(g.version),expiresAt:Number(g.expires_at),me:{id:me.id,name:me.name,role:me.role,allergy:openJson(String(me.allergy)),...present(me)},members:members.rows.map(m=>({id:m.id,name:m.name,role:m.role,...present(m),...(isOwner?{allergy:openJson(String(m.allergy))}:{})})),messages:messages.rows.map(m=>({id:m.id,authorId:m.author_id,author:m.author,kind:m.kind,text:m.text,reservation:m.reservation?reservationForViewer(openJson(String(m.reservation)),isOwner):null,createdAt:Number(m.created_at)}))};
 }
 export const newId=()=>randomUUID();
