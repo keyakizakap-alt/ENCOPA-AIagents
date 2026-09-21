@@ -7,6 +7,11 @@ test_dir="$(mktemp -d)"
 server_pid=""
 mock_pid=""
 
+if [[ ! -d .next ]]; then
+  echo "エラー: .next がありません。先に 'pnpm build' を実行してください。" >&2
+  exit 1
+fi
+
 cleanup() {
   if [[ -n "$server_pid" ]]; then
     kill "$server_pid" 2>/dev/null || true
@@ -29,6 +34,12 @@ export HOTPEPPER_API_KEY=""
 export ORCAROUTER_API_KEY="test-orca-key"
 export ORCAROUTER_BASE_URL="http://127.0.0.1:3011/v1"
 export ORCAROUTER_ALLOW_INSECURE_LOCALHOST="true"
+export TEST_MOCK_BASE_URL="http://127.0.0.1:3011"
+# Short enough that a test can watch the breaker close again without a long wait.
+export ENCOPA_AGENT_BREAKER_COOLDOWN_MS="1500"
+export TEST_BREAKER_COOLDOWN_MS="1500"
+# The suite makes more planning calls than a person would in an hour.
+export ENCOPA_AGENT_IP_HOURLY_LIMIT="60"
 
 node tests/orca-mock.mjs 3011 >"${test_dir}/orca-mock.log" 2>&1 &
 mock_pid="$!"
@@ -38,7 +49,9 @@ server_pid="$!"
 
 for _ in $(seq 1 80); do
   if curl --silent --fail --output /dev/null "$test_base"; then
-    node --test tests/groups.test.mjs
+    # Serialized: the local SQLite file cannot take concurrent writers, and parallel test
+    # files would make the routes degrade to their fallbacks on lock contention.
+    node --test --test-concurrency=1 tests/*.test.mjs
     exit 0
   fi
   if ! kill -0 "$server_pid" 2>/dev/null; then

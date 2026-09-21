@@ -1,8 +1,27 @@
 import { NextResponse, type NextRequest } from "next/server";
 import type { AgentPlan, VenueAgentAdvice } from "@/lib/agent-types";
-import { HttpError, limit, readBody, short } from "@/lib/server/security";
+import { database } from "@/lib/server/db";
+import { hash, HttpError, limit, log, logError, readBody, short } from "@/lib/server/security";
 
 export const runtime = "nodejs";
+/** Stated explicitly so the platform limit can never sit below the workflow deadline. */
+export const maxDuration = 60;
+
+/** Bump when a prompt, the model or the sampling parameters change: it keys the cache. */
+const PLAN_VERSION = "v1";
+const CACHE_TTL_MS = 30 * 60 * 1000;
+const MEMORY_CACHE_MAX_ENTRIES = 100;
+/** Consecutive transport/5xx failures after which routed calls stop for the cooldown. */
+const BREAKER_THRESHOLD = 3;
+/** Tunable so an operator can match it to their provider, and so tests can observe it close. */
+const breakerCooldownMs = () => envInteger("ENCOPA_AGENT_BREAKER_COOLDOWN_MS", 60000, 500, 600000);
+/** Whole-workflow budget. One call is capped below by REQUEST_TIMEOUT_MS. */
+const WORKFLOW_DEADLINE_MS = 40000;
+const REQUEST_TIMEOUT_MS = 12000;
+
+type CacheEntry = { plan: AgentPlan; expiresAt: number };
+const memoryCache = new Map<string, CacheEntry>();
+const breaker = { failures: 0, openedAt: 0 };
 
 type Candidate = {
   id: string;
@@ -54,23 +73,38 @@ export async function POST(request: NextRequest) {
     const apiKey = process.env.ORCAROUTER_API_KEY;
     if (!apiKey) throw new HttpError(503, "候補分析の接続設定が完了していません。管理者にお問い合わせください。");
 
+    const context = { purpose, area, budget, people, priority, privateRoom, dietary, candidates };
+
+    // A standard plan costs one routed call and a detailed one up to four, so an identical
+    // re-run is the most expensive thing this route can repeat. Checked before the limits:
+    // a cached answer spends no budget.
+    const key = planKey(context);
+    const cached = readMemoryCache(key) ?? await readSharedCache(key, traceId);
+    if (cached) return planResponse({ ...cached, traceId });
+
+    if (breakerOpen()) throw new HttpError(503, "候補分析が一時的に混み合っています。店舗候補はそのまま比較できます。");
+
     const forwarded = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
     const dailyLimit = envInteger("ENCOPA_AGENT_DAILY_LIMIT", 100, 1, 10000);
     await Promise.all([
-      limit(`agent-ip:${forwarded}`, 10, 3600),
+      // Configurable like the daily ceiling; the default is unchanged at 10 per hour.
+      limit(`agent-ip:${forwarded}`, envInteger("ENCOPA_AGENT_IP_HOURLY_LIMIT", 10, 1, 1000), 3600),
       limit("agent-global-daily", dailyLimit, 86400),
     ]);
-
-    const context = { purpose, area, budget, people, priority, privateRoom, dietary, candidates };
+    const deadline = Date.now() + WORKFLOW_DEADLINE_MS;
     const coordinator = await callOrca(
       apiKey,
       `あなたは宴会プランの統括担当です。${sharedRules}まず単独で店舗候補を比較し、予約前の確認事項と次の行動まで回答してください。入力だけでは判断が難しく、専門担当による再確認が必要な場合だけneedsSpecialistReviewをtrueにしてください。JSON形式: {recommendedVenueId:string,summary:string,venueAdvice:[{venueId:string,score:number,reason:string}],confirmationChecklist:string[],nextActions:string[],shareDraft:string,needsSpecialistReview:boolean,reviewReasons:string[]}。recommendedVenueIdとvenueAdviceのvenueIdは入力候補のIDだけを使う。`,
       context,
       650,
+      deadline,
     );
+    breaker.failures = 0;
     const review = reviewDecision(coordinator.value, context);
     if (!review.detailed) {
       const plan = normalizePlan(coordinator.value, candidates, traceId, [coordinator.resolvedModel], "standard");
+      await writeCache(key, plan, traceId);
+      log("agent_plan_ok", { traceId, depth: "standard", calls: 1 });
       return planResponse(plan);
     }
 
@@ -79,6 +113,8 @@ export async function POST(request: NextRequest) {
     } catch (error) {
       if (!(error instanceof HttpError) || error.status !== 429) throw error;
       const plan = normalizePlan(coordinator.value, candidates, traceId, [coordinator.resolvedModel], "standard");
+      await writeCache(key, plan, traceId);
+      log("agent_plan_ok", { traceId, depth: "standard", calls: 1, reason: "detailed_budget_spent" });
       return planResponse(plan);
     }
 
@@ -100,11 +136,13 @@ export async function POST(request: NextRequest) {
     const selectedSpecialists = selectSpecialists(specialistPrompts, context);
 
     const specialistResults = await Promise.allSettled(
-      selectedSpecialists.map((agent) => callOrca(apiKey, `${agent.role}です。${sharedRules}${agent.task}`, context, 450)),
+      selectedSpecialists.map((agent) => callOrca(apiKey, `${agent.role}です。${sharedRules}${agent.task}`, context, 450, deadline)),
     );
     const completed = specialistResults.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
     if (!completed.length) {
       const plan = normalizePlan(coordinator.value, candidates, traceId, [coordinator.resolvedModel], "standard");
+      await writeCache(key, plan, traceId);
+      logError("agent_specialists_failed", { traceId, requested: selectedSpecialists.length });
       return planResponse(plan);
     }
 
@@ -115,52 +153,121 @@ export async function POST(request: NextRequest) {
         `あなたは宴会プランの統括担当です。${sharedRules}専門担当の結果を矛盾なく統合してください。JSON形式: {recommendedVenueId:string,summary:string,venueAdvice:[{venueId:string,score:number,reason:string}],confirmationChecklist:string[],nextActions:string[],shareDraft:string}。recommendedVenueIdとvenueAdviceのvenueIdは入力候補のIDだけを使う。`,
         { context, initialAssessment: coordinator.value, reviewReasons: review.reasons, specialistResults: completed.map((result) => result.value) },
         650,
+        deadline,
       );
     } catch {
       const plan = normalizePlan(coordinator.value, candidates, traceId, [coordinator.resolvedModel, ...completed.map((result) => result.resolvedModel)], "standard");
+      await writeCache(key, plan, traceId);
+      logError("agent_synthesis_failed", { traceId, specialists: completed.length });
       return planResponse(plan);
     }
 
     const plan = normalizePlan(synthesis.value, candidates, traceId, [coordinator, ...completed, synthesis].map((result) => result.resolvedModel), "detailed");
+    await writeCache(key, plan, traceId);
+    log("agent_plan_ok", { traceId, depth: "detailed", calls: 2 + completed.length });
     return planResponse(plan);
   } catch (error) {
     if (error instanceof HttpError) return NextResponse.json({ available: false, traceId, error: error.message }, { status: error.status, headers: { "Cache-Control": "no-store" } });
-    console.error("[encopa] agent workflow failed", error instanceof Error ? error.name : "unknown", traceId);
+    breaker.failures += 1;
+    if (breaker.failures >= BREAKER_THRESHOLD) breaker.openedAt = Date.now();
+    logError("agent_workflow_failed", { traceId, error: error instanceof Error ? error.name : "unknown", reason: error instanceof Error ? error.message.slice(0, 60) : null, consecutiveFailures: breaker.failures });
     return NextResponse.json({ available: false, traceId, error: "候補分析を完了できませんでした。店舗候補はそのまま比較できます。" }, { status: 502, headers: { "Cache-Control": "no-store" } });
   }
 }
 
-async function callOrca(apiKey: string, system: string, payload: unknown, maxTokens: number): Promise<OrcaResult> {
+/**
+ * One retry for a transient failure (429 / 408 / 5xx / transport), and one for a 4xx that
+ * is the router refusing the request shape rather than the request itself. Reasoning-tier
+ * models reject a non-default temperature, want max_completion_tokens instead of
+ * max_tokens, and may not accept response_format, so the compatibility attempt drops all
+ * three. Without it, first contact with a newly routed model fails permanently and reads
+ * as an outage.
+ */
+async function callOrca(apiKey: string, system: string, payload: unknown, maxTokens: number, deadline: number): Promise<OrcaResult> {
+  let compatibility = false;
+  let last: Error = new Error("orca_unknown");
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw last;
+    if (attempt > 0) await sleep(250 + Math.floor(Math.random() * 250));
+    try {
+      return await attemptOrca(apiKey, system, payload, maxTokens, Math.min(REQUEST_TIMEOUT_MS, remaining), compatibility);
+    } catch (error) {
+      last = error instanceof Error ? error : new Error("orca_unknown");
+      const status = /^orca_http_(\d{3})$/.exec(last.message)?.[1];
+      if (status) {
+        const code = Number(status);
+        if (code >= 400 && code < 500 && code !== 408 && code !== 429) {
+          if (compatibility) throw last;
+          compatibility = true;
+          continue;
+        }
+      } else if (last.message === "orca_invalid_json" || last.message === "orca_empty") {
+        throw last;
+      }
+    }
+  }
+  throw last;
+}
+
+async function attemptOrca(apiKey: string, system: string, payload: unknown, maxTokens: number, timeoutMs: number, compatibility: boolean): Promise<OrcaResult> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 12000);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const model = process.env.ORCAROUTER_MODEL?.trim() || "auto";
+  const messages = [{ role: "system", content: system }, { role: "user", content: JSON.stringify(payload) }];
   try {
     const response = await fetch(`${orcaBaseUrl()}/chat/completions`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model: process.env.ORCAROUTER_MODEL?.trim() || "auto",
-        temperature: 0.15,
-        max_tokens: maxTokens,
-        response_format: { type: "json_object" },
-        messages: [{ role: "system", content: system }, { role: "user", content: JSON.stringify(payload) }],
-      }),
+      body: JSON.stringify(compatibility
+        ? { model, max_completion_tokens: maxTokens, messages }
+        : { model, temperature: 0.15, max_tokens: maxTokens, response_format: { type: "json_object" }, messages }),
       signal: controller.signal,
       cache: "no-store",
     });
     if (!response.ok) throw new Error(`orca_http_${response.status}`);
-    const data = await response.json() as { model?: string; choices?: Array<{ message?: { content?: string } }> };
-    const content = data.choices?.[0]?.message?.content;
+    const data = await response.json() as { model?: string; choices?: Array<{ message?: { content?: unknown } }> };
+    const content = textOf(data.choices?.[0]?.message?.content);
     if (!content) throw new Error("orca_empty");
-    const value = JSON.parse(content) as unknown;
-    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("orca_invalid_json");
+    const value = parseJsonObject(content);
+    if (!value) throw new Error("orca_invalid_json");
     return {
-      value: value as Record<string, unknown>,
+      value,
       resolvedModel: clean(response.headers.get("x-orca-resolved-model") || data.model || "auto", 100),
     };
   } finally {
     clearTimeout(timeout);
   }
 }
+
+/**
+ * Providers disagree on whether a completion is a string or a list of content parts, and
+ * a model without response_format support may wrap the object in prose or a code fence.
+ */
+function textOf(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((part) => (typeof part === "string" ? part : typeof (part as { text?: unknown })?.text === "string" ? (part as { text: string }).text : ""))
+    .join("");
+}
+
+function parseJsonObject(content: string): Record<string, unknown> | null {
+  const candidates = [content];
+  const fenced = /```(?:json)?\s*([\s\S]*?)```/.exec(content)?.[1];
+  if (fenced) candidates.push(fenced);
+  const braced = content.slice(content.indexOf("{"), content.lastIndexOf("}") + 1);
+  if (braced.startsWith("{")) candidates.push(braced);
+  for (const candidate of candidates) {
+    try {
+      const value = JSON.parse(candidate) as unknown;
+      if (value && typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>;
+    } catch { /* try the next shape */ }
+  }
+  return null;
+}
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 function normalizePlan(value: Record<string, unknown>, candidates: Candidate[], traceId: string, models: string[], analysisDepth: AgentPlan["analysisDepth"]): AgentPlan {
   const ids = new Set(candidates.map((candidate) => candidate.id));
@@ -243,6 +350,70 @@ function candidateList(value: unknown): Candidate[] {
       deterministicScore: integer(row.score, 0, 100, "候補スコア"),
     }];
   }).filter((candidate) => candidate.name && candidate.address);
+}
+
+function planKey(context: { purpose: string; area: string; budget: number; people: number; priority: string; privateRoom: boolean; dietary: boolean; candidates: Candidate[] }) {
+  // Candidate identity and the deterministic score are what a plan actually depends on;
+  // including the whole record would make the key change on any unrelated field edit.
+  const fingerprint = context.candidates.map((candidate) => `${candidate.id}:${candidate.deterministicScore}`).join(",");
+  return hash([PLAN_VERSION, context.purpose, context.area, context.budget, context.people, context.priority, context.privateRoom, context.dietary, fingerprint].join("|"));
+}
+
+function breakerOpen() {
+  if (breaker.failures < BREAKER_THRESHOLD) return false;
+  if (Date.now() - breaker.openedAt < breakerCooldownMs()) return true;
+  breaker.failures = 0;
+  breaker.openedAt = 0;
+  return false;
+}
+
+function readMemoryCache(key: string) {
+  const entry = memoryCache.get(key);
+  if (!entry) return null;
+  if (entry.expiresAt <= Date.now()) { memoryCache.delete(key); return null; }
+  memoryCache.delete(key); memoryCache.set(key, entry);
+  return entry.plan;
+}
+
+function writeMemoryCache(key: string, entry: CacheEntry) {
+  memoryCache.set(key, entry);
+  while (memoryCache.size > MEMORY_CACHE_MAX_ENTRIES) {
+    const oldest = memoryCache.keys().next();
+    if (oldest.done) break;
+    memoryCache.delete(oldest.value);
+  }
+}
+
+/** A cache miss must never be an outage: every failure here degrades to calling the router. */
+async function readSharedCache(key: string, traceId: string): Promise<AgentPlan | null> {
+  try {
+    const db = await database();
+    const r = await db.execute({ sql: "SELECT plan FROM encopa_agent_cache WHERE key=? AND expires_at>?", args: [key, Date.now()] });
+    if (!r.rows.length) return null;
+    const plan = JSON.parse(String(r.rows[0].plan)) as AgentPlan;
+    writeMemoryCache(key, { plan, expiresAt: Date.now() + CACHE_TTL_MS });
+    log("agent_cache_hit", { traceId, tier: "shared", depth: plan.analysisDepth });
+    return plan;
+  } catch (error) {
+    logError("agent_cache_read_failed", { traceId, error: error instanceof Error ? error.name : "unknown" });
+    return null;
+  }
+}
+
+async function writeCache(key: string, plan: AgentPlan, traceId: string) {
+  const expiresAt = Date.now() + CACHE_TTL_MS;
+  writeMemoryCache(key, { plan, expiresAt });
+  try {
+    const db = await database();
+    // Expired rows are otherwise only cleared by the manual db:cleanup run.
+    if (Math.random() < 0.02) await db.execute({ sql: "DELETE FROM encopa_agent_cache WHERE expires_at<=?", args: [Date.now()] });
+    await db.execute({
+      sql: "INSERT INTO encopa_agent_cache(key,plan,created_at,expires_at) VALUES(?,?,?,?) ON CONFLICT(key) DO UPDATE SET plan=excluded.plan,created_at=excluded.created_at,expires_at=excluded.expires_at",
+      args: [key, JSON.stringify(plan), Date.now(), expiresAt],
+    });
+  } catch (error) {
+    logError("agent_cache_write_failed", { traceId, error: error instanceof Error ? error.name : "unknown" });
+  }
 }
 
 function orcaBaseUrl() {

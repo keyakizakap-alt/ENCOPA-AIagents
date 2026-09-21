@@ -54,6 +54,32 @@ pnpm dev
 
 秘密値に`NEXT_PUBLIC_`を付けないでください。Vercelのローカルファイルシステムは永続化されないため、本番で`file:`データベースは使用できません。
 
+## レンダリング方式とCSP
+
+`middleware.ts`がリクエストごとにnonceを発行し、`script-src`は`'nonce-...' 'strict-dynamic'`で構成します（`'unsafe-inline'`は含みません。併記している`'unsafe-inline'`と`https:`は`strict-dynamic`非対応ブラウザ向けの後方互換で、対応ブラウザでは無視されます）。
+
+厳格なCSPはレスポンスごとに異なるnonceを必要とし、**プリレンダリング済みのページはそれを持てません**（ビルド時のHTMLにはnonce属性が無く、全スクリプトがブロックされます）。そのため`app/layout.tsx`で`export const dynamic = 'force-dynamic'`を指定しています。`pnpm build`の出力で`/`が`○ (Static)`になっていたらこの指定が外れています。`tests/agent.test.mjs`の「every script carries the nonce from this response」がこの退行を検出します。
+
+ホットペッパーの店舗画像（`imgfp.hotp.jp`）は`img-src`で明示的に許可しています。
+
+## 候補分析のコスト管理
+
+標準計画は経路呼び出し1回、詳細分析は最大4回を消費します。3段の歯止めがあります。
+
+| 仕組み | 既定 | 挙動 |
+|---|---|---|
+| 計画キャッシュ（メモリ＋`encopa_agent_cache`） | TTL 30分 | 同一条件・同一候補の再実行で呼び出し0回 |
+| クライアント単位 `ENCOPA_AGENT_IP_HOURLY_LIMIT` | 10件/時 | 1人が全体予算を使い切れない |
+| サイト全体 `ENCOPA_AGENT_DAILY_LIMIT` / `ENCOPA_AGENT_DETAILED_DAILY_LIMIT` | 100 / 30件/日 | 詳細分析の枠を使い切ると標準計画へ縮退 |
+
+一時的な失敗（429・5xx・タイムアウト）は1回だけ再試行し、リクエスト形式を拒否された場合（4xx）は最小構成で1回だけ再試行します。連続3回失敗すると`ENCOPA_AGENT_BREAKER_COOLDOWN_MS`の間、呼び出し自体を停止します。
+
+## デザイントークン
+
+色は`app/globals.css`の`:root`に集約し、`@theme inline`経由で`bg-surface`・`text-muted-ink`・`text-brand`などのユーティリティとして参照します。TSX側に16進リテラルを直接書かないでください（グラデーションなど、意図的に個別の装飾色を除く）。
+
+本文用の`--muted-ink`とフォーカスリングの`--ring`は、WCAG 2.2 AA（本文4.5:1、フォーカス表示3:1）を満たす値です。トークンを変更する場合はコントラスト比を再測定してください。
+
 ## 検証
 
 ```bash

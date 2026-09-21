@@ -13,10 +13,37 @@
 
 ロールバック判断：グループ作成不可、参加者が別グループを閲覧できる、予約共有が誤った内容になる、重大な情報漏えいが疑われる場合。
 
+## 障害調査
+
+サーバーは1行のJSONで構造化ログを出力します（利用者データは含みません）。
+
+| event | 意味 |
+|---|---|
+| `agent_plan_ok` | 計画生成成功。`depth`（standard/detailed）と`calls`（消費した経路呼び出し数）を記録 |
+| `agent_cache_hit` | キャッシュ応答。外部呼び出しなし。`tier`が`shared`なら`encopa_agent_cache`由来 |
+| `agent_workflow_failed` | 計画生成に失敗。`reason`と`consecutiveFailures`を確認 |
+| `agent_specialists_failed` / `agent_synthesis_failed` | 詳細分析の一部が失敗し、標準計画へ縮退 |
+| `agent_cache_read_failed` / `agent_cache_write_failed` | キャッシュ処理の失敗。リクエストは継続します |
+| `request_failed` | 共有機能の想定外エラー。例外クラス名のみ記録します |
+
+利用者から申告されたエラーIDは、レスポンスの`traceId`および画面の「エラーID」と一致します。
+
+`agent_workflow_failed`が連続3回に達すると、`ENCOPA_AGENT_BREAKER_COOLDOWN_MS`（既定60秒）の間、外部呼び出し自体を停止します（プロセス内メモリで保持するため、インスタンスごとに独立して動作します）。
+
+**APIキー投入直後に確認すること**：最初の検索で`agent_plan_ok`が出れば正常です。`reason`が`orca_http_401`なら鍵、`orca_http_404`なら`ORCAROUTER_MODEL`または`ORCAROUTER_BASE_URL`を確認してください。リクエスト形式が拒否された場合は最小構成（`temperature`なし・`response_format`なし・`max_completion_tokens`）で自動的に再試行します。
+
+## キャッシュ運用
+
+`encopa_agent_cache`は生成された計画のみを保持し、利用者データも検索条件の平文も含みません（キーはSHA-256ハッシュ）。TTLは30分です。標準計画は経路呼び出し1回、詳細分析は最大4回を消費するため、キャッシュの効きがそのままコストに直結します。
+
+- プロンプト・モデル・サンプリング設定を変更したときは、`app/api/agent/route.ts`の`PLAN_VERSION`を更新してください
+- 不正な計画が配信されている場合は`DELETE FROM encopa_agent_cache;`で即時無効化できます
+- 期限切れ行は書き込みの一部で自動削除されるほか、`pnpm db:cleanup`でも削除します
+
 ## 定期運用
 
 - 毎日：Vercel Functionの5xx、DB接続エラー、OrcaRouterのエラー率を確認
-- 毎週：`pnpm db:cleanup`を実行し期限切れデータを削除
+- 毎週：`pnpm db:cleanup`を実行し期限切れデータ（グループ・レート制限・計画キャッシュ）を削除
 - 毎月：依存関係の監査、Turso利用量、ホットペッパーWebサービス利用状況、OrcaRouter利用量を確認
 - 毎月：通常分析と詳細分析の比率、`ENCOPA_AGENT_DETAILED_DAILY_LIMIT`到達回数を確認し、詳細分析が恒常的に多い場合は判定条件と入力データ品質を見直す
 - 秘密値漏えい時：Tursoトークン、作成コード、ホットペッパーAPIキー、OrcaRouter APIキーをローテーションする。`ENCOPA_DATA_KEY`は先に既存データを復号・再暗号化する移行手順を用意し、単純な差し替えは行わない
