@@ -6,6 +6,11 @@ test_base="http://127.0.0.1:${test_port}"
 test_dir="$(mktemp -d)"
 server_pid=""
 
+if [[ ! -d .next ]]; then
+  echo "エラー: .next がありません。先に 'pnpm build' を実行してください。" >&2
+  exit 1
+fi
+
 cleanup() {
   if [[ -n "$server_pid" ]]; then
     kill "$server_pid" 2>/dev/null || true
@@ -27,7 +32,7 @@ server_pid="$!"
 
 for _ in $(seq 1 80); do
   if curl --silent --fail --output /dev/null "$test_base"; then
-    node --test tests/groups.test.mjs
+    node --test tests/*.test.mjs
     exit 0
   fi
   if ! kill -0 "$server_pid" 2>/dev/null; then

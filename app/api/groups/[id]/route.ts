@@ -12,13 +12,13 @@ export async function POST(req:NextRequest,ctx:Context){return failure(async()=>
   await limit(`join:${id}`,60,3600);
   const invite=short(body.invite,100,'招待リンク');
   if(Number(g.invite_expires)<Date.now()||!equal(hash(invite),String(g.invite_hash)))throw new HttpError(403,'招待リンクが無効か期限切れです。幹事に再発行を依頼してください。');
-  try{await member(req,id);return result({joined:true})}catch(e){if(!(e instanceof HttpError&&e.status===401))throw e}
+  try{await member(req,id,false,g);return result({joined:true})}catch(e){if(!(e instanceof HttpError&&e.status===401))throw e}
   const name=short(body.name,30,'表示名'),session=token(),mid=newId(),now=Date.now();
   const inserted=await db.execute({sql:`INSERT INTO encopa_members(id,group_id,name,role,session_hash,expires_at,allergy,created_at) SELECT ?,?,?,'member',?,?,?,? WHERE (SELECT COUNT(*) FROM encopa_members WHERE group_id=?)<200`,args:[mid,id,name,hash(session),now+30*86400000,JSON.stringify(EMPTY_ALLERGY),now,id]});
   if(!inserted.rowsAffected)throw new HttpError(409,'このグループは参加人数の上限に達しています。');
   return sessionResponse({joined:true},id,session);
  }
- const me=await member(req,id);await limit(`write:${me.id}`,30);
+ const me=await member(req,id,false,g);await limit(`write:${me.id}`,30);
  if(body.action==='message'){
   const text=short(body.text,2000,'メッセージ'),requestKey=short(body.requestKey,80,'送信ID');
   await db.execute({sql:"INSERT OR IGNORE INTO encopa_messages(id,group_id,author_id,author,kind,text,created_at,request_key) VALUES(?,?,?,?,'text',?,?,?)",args:[newId(),id,String(me.id),String(me.name),text,Date.now(),requestKey]});return result({ok:true});

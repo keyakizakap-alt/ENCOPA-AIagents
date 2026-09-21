@@ -14,6 +14,9 @@
 - アレルギー詳細を本人と幹事だけに返す権限制御
 - 予約内容の版管理、二重投稿防止、招待リンクの失効と再発行
 - Vercel向けTurso接続と、ローカル開発用SQLite
+- 外部モデル障害時の再試行・サーキットブレーカ・ローカル評価への自動フォールバック
+- 描画例外から復帰できるError Boundary（`app/error.tsx` / `app/global-error.tsx`）
+- trace IDで相関できる構造化ログ（利用者データを含まない）
 
 > 候補カードは比較ロジックを確認するためのデモ店舗です。実店舗検索・空席照会・店舗予約は行いません。店舗で予約が成立した後、幹事が正しい予約状況を登録してください。
 
@@ -52,7 +55,7 @@ pnpm dev
 ```bash
 pnpm lint
 pnpm typecheck
-pnpm build
+pnpm build   # pnpm test は .next を必要とします
 pnpm test
 pnpm audit --prod
 ```
@@ -68,12 +71,17 @@ pnpm audit --prod
 - CSRF、危険なURL、無効日付の拒否
 - 別グループからのアクセス拒否
 - 招待再発行と退出処理
+- `/api/agent` のCSRF・Content-Type・16KiB上限・条件検証・フォールバック応答
+- CSPを含むセキュリティレスポンスヘッダ
 
 ## データとセキュリティ
 
 - 認証情報は32バイトのランダム値をCookieへ保存し、DBにはSHA-256ハッシュだけを保持します。
 - CookieはHttpOnly、SameSite Strict、本番ではSecureです。
 - POSTは同一Origin、JSON、16KiB以下に制限します。
+- `Content-Security-Policy`（`default-src 'self'` / `object-src 'none'` / `base-uri 'self'` / `form-action 'self'` / `frame-ancestors 'none'`）と`Cross-Origin-Opener-Policy`を配信します。
+- グループ作成は、試行回数の制限とは別に、作成コードの検証後にだけ作成枠を消費します。
+- `/api/agent`へ渡す目的・優先度は列挙値で検証し、モデル出力は制御文字・タグ・リンク構文を除去したうえで400字に制限します。候補の順位はローカルの決定的評価が決めるため、モデル出力は順位に影響しません。
 - グループは90日、参加セッションは30日、招待リンクは7日で期限切れになります。
 - チャットは最新100件を表示します。
 - グループ削除は復元できません。期限切れデータは`pnpm db:cleanup`で削除できます。
@@ -87,9 +95,20 @@ app/groups/[id]/page.tsx        予約内容・参加者・チャット画面
 app/api/groups/route.ts         グループ作成
 app/api/groups/[id]/route.ts    参加・更新・投稿・権限制御
 lib/server/db.ts                SQLite / Turso接続とスキーマ
-lib/server/security.ts          Cookie、Origin、入力長、レート制限
+lib/server/security.ts          Cookie、Origin、入力長、レート制限、構造化ログ
+app/api/agent/route.ts          条件検証、再試行、サーキットブレーカ、キャッシュ
+app/error.tsx                   描画例外からの復帰画面
+app/globals.css                 デザイントークンとアクセシビリティ設定
 tests/groups.test.mjs           共有機能の統合試験
+tests/agent.test.mjs            候補評価APIとヘッダの統合試験
+docs/AUDIT-2026-09.md           監査レポート（評価軸別の採点と根拠）
 ```
+
+## デザイントークン
+
+色は`app/globals.css`の`:root`に集約し、`@theme inline`経由で`bg-surface`・`text-muted-ink`・`text-brand`などのユーティリティとして参照します。TSX側に16進リテラルを直接書かないでください（会場カードのグラデーションなど、意図的に個別の装飾色を除く）。
+
+本文用の`--muted-ink`とフォーカスリングの`--ring`は、WCAG 2.2 AA（本文4.5:1、フォーカス表示3:1）を満たす値を選んでいます。トークンを変更する場合はコントラスト比を再測定してください。
 
 ## 既知の制約
 
@@ -98,3 +117,8 @@ tests/groups.test.mjs           共有機能の統合試験
 - チャット更新はリアルタイムSocketではなく15秒間隔のポーリングです。
 - アレルギー選択は店舗対応を保証しません。必ず店舗へ確認してください。
 - 実店舗検索、実空席、予約実行、プッシュ通知は未接続です。
+- 候補の順位はローカルの決定的評価が決め、外部モデルは説明文の生成のみを担当します。自動計画・自動実行は行いません。
+- 完全一致キャッシュとサーキットブレーカはプロセス内メモリで保持するため、サーバーレスの複数インスタンス間では共有されません。
+- プロバイダ側のプロンプトキャッシュは未対応です（対応可否を公式資料で確認できていないため）。
+
+詳細な評価と未対応事項は`docs/AUDIT-2026-09.md`を参照してください。
