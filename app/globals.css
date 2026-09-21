@@ -110,4 +110,19 @@ button:focus-visible, input:focus-visible, a:focus-visible, textarea:focus-visib
 .enc-primary:hover { background: #0e332f; transform: translateY(-1px); }
 .enc-secondary { border: 1px solid #d4d4cd; background: white; color: #173f3a; }
 .enc-secondary:hover { border-color: #9fb0aa; background: #eef3f0; }
-button:disabled { opacity: .55; cursor: not-allowed; transform: none !important; }
+/* Tailwind v4 dropped cursor:pointer from its button preflight, so every control outside
+   .enc-* read as inert. Restored here rather than per component, where it drifts. */
+button:not(:disabled), [role="button"]:not([aria-disabled="true"]), summary { cursor: pointer; }
+button:disabled, [aria-disabled="true"] { opacity: .55; cursor: not-allowed; transform: none !important; }
+[aria-busy="true"] { cursor: progress; }
+
+/* 日本語の行分割。行頭に置けない記号を守り、対応ブラウザでは文節で折ります。
+   これが無いと、狭い段でタイトルが一文字ずつ折れます。 */
+@utility jp-text {
+  line-break: strict;
+  overflow-wrap: normal;
+  text-wrap: pretty;
+}
+@supports (word-break: auto-phrase) {
+  .jp-text { word-break: auto-phrase; }
+}

@@ -45,6 +45,28 @@ test('group membership, allergies, chat, reservation sharing and revocation',asy
    const self=await call(path,undefined,alice),other=await call(path,undefined,bob),org=await call(path,undefined,owner);
    assert.deepEqual(self.body.me.allergy.items,['卵','乳']);assert.ok(other.body.members.every(m=>!Object.hasOwn(m,'allergy')));assert.deepEqual(org.body.members.find(m=>m.name==='参加者A').allergy.items,['卵','乳']);
   });
+  await t.test('attendance defaults to unanswered and only the member can change their own',async()=>{
+   const initial=await call(path,undefined,owner);
+   assert.ok(initial.body.members.every(m=>m.rsvp==='pending'&&m.affiliation===''&&m.answeredAt===0));
+   assert.equal((await call(path,{action:'rsvp',rsvp:'maybe'},alice)).status,400);
+   assert.equal((await call(path,{action:'rsvp',rsvp:'yes'},alice)).status,200);
+   assert.equal((await call(path,{action:'rsvp',rsvp:'no'},bob)).status,200);
+   // No memberId is honoured, so an organiser cannot answer in someone else's place.
+   assert.equal((await call(path,{action:'rsvp',rsvp:'yes',memberId:'ignored'},owner)).status,200);
+   const seen=await call(path,undefined,bob);
+   const a=seen.body.members.find(m=>m.name==='参加者A'),b=seen.body.members.find(m=>m.name==='参加者B');
+   assert.equal(a.rsvp,'yes');assert.equal(b.rsvp,'no');assert.ok(a.answeredAt>0);
+   assert.equal(seen.body.me.rsvp,'no');
+   // Going back to unanswered clears the timestamp, so a stale answer time cannot linger.
+   assert.equal((await call(path,{action:'rsvp',rsvp:'pending'},bob)).status,200);
+   assert.equal((await call(path,undefined,bob)).body.me.answeredAt,0);
+   assert.equal((await call(path,{action:'rsvp',rsvp:'yes'},bob,'https://evil.example')).status,403);
+  });
+  await t.test('affiliation is visible to the whole group and length-limited',async()=>{
+   assert.equal((await call(path,{action:'profile',name:'参加者A',affiliation:'あ'.repeat(41),allergy:{status:'none'}},alice)).status,400);
+   assert.equal((await call(path,{action:'profile',name:'参加者A',affiliation:'営業部',allergy:{status:'none'}},alice)).status,200);
+   assert.equal((await call(path,undefined,bob)).body.members.find(m=>m.name==='参加者A').affiliation,'営業部');
+  });
   await t.test('non-owner cannot edit or share reservation',async()=>{assert.equal((await call(path,{action:'reservation',reservation:booking,version:1},alice)).status,403);assert.equal((await call(path,{action:'share',version:1},alice)).status,403)});
   await t.test('message visible to second member and retries do not duplicate',async()=>{const payload={action:'message',text:'<script>not executable</script> テスト連絡',requestKey:'test-send-1'};assert.equal((await call(path,payload,alice)).status,200);assert.equal((await call(path,payload,alice)).status,200);const r=await call(path,undefined,bob);assert.equal(r.body.messages.length,1);assert.equal(r.body.messages[0].text,payload.text)});
   await t.test('reservation snapshot posts once per version',async()=>{assert.equal((await call(path,{action:'share',version:1},owner)).status,200);assert.equal((await call(path,{action:'share',version:1},owner)).status,200);let r=await call(path,undefined,bob);assert.equal(r.body.messages.filter(m=>m.kind==='reservation').length,1);assert.equal(r.body.messages[1].reservation.status,'planning');

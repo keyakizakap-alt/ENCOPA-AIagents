@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { NextRequest } from 'next/server';
-import { ALLERGENS,EMPTY_ALLERGY,type AllergyProfile,type Reservation } from '../group-types';
+import { ALLERGENS,EMPTY_ALLERGY,type AllergyProfile,type Reservation,type Rsvp } from '../group-types';
 import { database } from './db';
 import { openJson } from './crypto';
 import { cookieName,hash,HttpError,short } from './security';
@@ -21,13 +21,20 @@ export function allergy(value:unknown):AllergyProfile {
  if(v.consent!==true||!Array.isArray(v.items)||!v.items.length||v.items.some(x=>!(ALLERGENS as readonly unknown[]).includes(x)))throw new HttpError(400,'対象を選び、幹事との共有に同意してください。');
  return {status:'selected',items:[...new Set(v.items as string[])],note:short(v.note??'',400,'補足',false),consent:true};
 }
+/** Trusts nothing from the client: an unknown value is rejected rather than coerced. */
+export function attendance(value:unknown):Rsvp {
+ if(!['pending','yes','no'].includes(String(value)))throw new HttpError(400,'出欠を選択してください。');
+ return value as Rsvp;
+}
 export async function group(id:string){if(!/^[a-f0-9-]{36}$/.test(id))throw new HttpError(404,'グループが見つかりません。');const db=await database();const r=await db.execute({sql:'SELECT * FROM encopa_groups WHERE id=? AND expires_at>?',args:[id,Date.now()]});if(!r.rows.length)throw new HttpError(404,'グループが見つからないか、有効期限が切れています。');return r.rows[0]}
 export async function member(req:NextRequest,id:string,owner=false,known?:Awaited<ReturnType<typeof group>>){if(!known)await group(id);const raw=req.cookies.get(cookieName(id))?.value;if(!raw)throw new HttpError(401,'招待リンクから参加してください。');const db=await database();const r=await db.execute({sql:'SELECT * FROM encopa_members WHERE group_id=? AND session_hash=? AND expires_at>?',args:[id,hash(raw),Date.now()]});if(!r.rows.length)throw new HttpError(401,'参加情報の有効期限が切れました。招待リンクから参加してください。');if(owner&&r.rows[0].role!=='owner')throw new HttpError(403,'この操作は幹事のみ行えます。');return r.rows[0]}
 export async function snapshot(req:NextRequest,id:string){
  // The group row is read once and handed to member(), instead of each helper re-reading it:
  // the room polls this endpoint every 15 seconds per participant.
  const g=await group(id);const me=await member(req,id,false,g);const db=await database();
- const [members,messages]=await Promise.all([db.execute({sql:'SELECT id,name,role,allergy FROM encopa_members WHERE group_id=? ORDER BY created_at',args:[id]}),db.execute({sql:'SELECT * FROM (SELECT rowid AS seq,* FROM encopa_messages WHERE group_id=? ORDER BY created_at DESC,rowid DESC LIMIT 100) ORDER BY created_at,seq',args:[id]})]);
- return {id,title:g.title,reservation:openJson(String(g.reservation)),version:Number(g.version),expiresAt:Number(g.expires_at),me:{id:me.id,name:me.name,role:me.role,allergy:openJson(String(me.allergy))},members:members.rows.map(m=>({id:m.id,name:m.name,role:m.role,...(me.role==='owner'?{allergy:openJson(String(m.allergy))}:{})})),messages:messages.rows.map(m=>({id:m.id,authorId:m.author_id,author:m.author,kind:m.kind,text:m.text,reservation:m.reservation?openJson(String(m.reservation)):null,createdAt:Number(m.created_at)}))};
+ const [members,messages]=await Promise.all([db.execute({sql:'SELECT id,name,role,allergy,rsvp,affiliation,answered_at FROM encopa_members WHERE group_id=? ORDER BY created_at',args:[id]}),db.execute({sql:'SELECT * FROM (SELECT rowid AS seq,* FROM encopa_messages WHERE group_id=? ORDER BY created_at DESC,rowid DESC LIMIT 100) ORDER BY created_at,seq',args:[id]})]);
+ // 出欠と所属はグループ内に公開する情報。アレルギーだけは本人と幹事に限って返す。
+ const present=(m:Record<string,unknown>)=>({rsvp:String(m.rsvp??'pending') as Rsvp,affiliation:String(m.affiliation??''),answeredAt:Number(m.answered_at??0)});
+ return {id,title:g.title,reservation:openJson(String(g.reservation)),version:Number(g.version),expiresAt:Number(g.expires_at),me:{id:me.id,name:me.name,role:me.role,allergy:openJson(String(me.allergy)),...present(me)},members:members.rows.map(m=>({id:m.id,name:m.name,role:m.role,...present(m),...(me.role==='owner'?{allergy:openJson(String(m.allergy))}:{})})),messages:messages.rows.map(m=>({id:m.id,authorId:m.author_id,author:m.author,kind:m.kind,text:m.text,reservation:m.reservation?openJson(String(m.reservation)):null,createdAt:Number(m.created_at)}))};
 }
 export const newId=()=>randomUUID();
