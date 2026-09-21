@@ -296,7 +296,7 @@ export default function Home() {
           <div className="mb-4 flex flex-col justify-between gap-3 sm:flex-row sm:items-end"><div className="min-w-0 shrink-0"><p className="text-[12px] font-semibold tracking-[.12em] text-[#c03429]">RESTAURANTS · {query.area}</p><h2 className="jp-text mt-1 font-serif text-[clamp(1.35rem,2vw,1.75rem)] font-semibold tracking-tight">{searched?candidates.length?`${query.purpose}に合う実店舗\u00a0${candidates.length}件`:"検索結果":"条件を入力して実店舗を検索"}</h2></div><p className="jp-text min-w-0 max-w-md text-sm leading-6 text-[#6b635c]">予算、人数、個室などの条件から実在する店舗を比較します。空席とアレルギー対応は予約前に店舗へ確認してください。</p></div>
           {!searched&&<div className="grid min-h-56 place-items-center rounded-[24px] border border-dashed border-[#211f1d]/20 bg-white px-6 text-center"><div><Search className="mx-auto size-8 text-[#d03e28]"/><p className="mt-4 font-semibold">都道府県を選んで「実店舗を検索」を押してください</p><p className="mt-2 text-sm text-[#6b635c]">全国47都道府県から選択できます</p></div></div>}
           {failover&&candidates.length>1&&<div className="mb-4 flex items-start gap-3 rounded-2xl border border-[#f0a988]/30 bg-[#fdeae5] p-4 text-sm text-[#8a3a22]"><RefreshCw className="mt-0.5 size-4 shrink-0"/><div><p className="font-semibold">次の候補を先頭に表示しました</p><p className="mt-1 text-xs">検索条件は変えずに、別の店舗を比較できます。</p></div></div>}
-          {candidates.length>0&&<div className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">
+          {candidates.length>0&&<div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))] gap-4">
             {candidates.map((v,i)=><article key={v.id} aria-current={selected===i?"true":undefined} className={`group flex flex-col overflow-hidden rounded-[22px] border bg-white text-left transition duration-300 hover:-translate-y-1 hover:shadow-xl ${selected===i?"border-[#d03e28] ring-2 ring-[#d03e28]/12":"border-[#211f1d]/10"}`}>
               <div className="relative h-36 overflow-hidden bg-gradient-to-br from-[#c03429] to-[#b03320] text-white">{v.photoUrl&&<Image src={v.photoUrl} alt="" fill sizes="(min-width:1280px) 30vw, 100vw" className="object-cover transition duration-300 group-hover:scale-[1.03]"/>}<div className="absolute inset-0 bg-gradient-to-t from-black/55 via-black/10 to-transparent"/><div className="absolute inset-x-0 top-0 flex items-start justify-between p-4"><Badge className="border-white/15 bg-black/35 text-white">{i===0?"最も条件に合う":`候補 ${i+1}`}</Badge><div className="grid size-12 place-items-center rounded-full bg-white text-[#b03320] shadow-lg"><span className="text-lg font-bold">{v.score}</span></div></div></div>
               <div className="flex flex-1 flex-col p-5"><p className="text-xs font-medium text-[#c03429]">{v.genre}</p><h3 className="mt-1 line-clamp-2 min-h-[56px] text-xl font-semibold tracking-tight">{v.name}</h3><div className="mt-3 flex items-start justify-between gap-3 text-sm"><span className="font-semibold">{v.budgetLabel}</span><span className="line-clamp-2 text-right text-xs text-[#6b635c]">{v.access}</span></div><p className="mt-4 min-h-[72px] text-sm leading-6 text-[#6b635c]">{v.reason}</p><dl className="mt-4 flex items-center justify-between gap-1 rounded-xl bg-[#fdf6ef] px-3 py-2.5 text-[11px]"><ScorePart label="条件" value={v.breakdown.fit}/><span className="h-5 w-px shrink-0 bg-[#211f1d]/10"/><ScorePart label="予算" value={v.breakdown.budget}/><span className="h-5 w-px shrink-0 bg-[#211f1d]/10"/><ScorePart label="利便" value={v.breakdown.convenience}/></dl><div className="mt-4 flex flex-wrap gap-2">{[v.privateRoom&&"個室あり",v.freeDrink&&"飲み放題",v.course&&"コースあり",v.partyCapacity&&`宴会最大${v.partyCapacity}名`].filter(Boolean).map(tag=><span key={String(tag)} className="rounded-full bg-[#f6ece1] px-2.5 py-1 text-xs text-[#6b635c]">{tag}</span>)}</div><p className="mt-4 flex items-center gap-1.5 text-xs font-medium text-[#2f7d55]"><CircleCheck className="size-4 shrink-0"/>空席は店舗へ確認</p>
@@ -307,24 +307,18 @@ export default function Home() {
                   <button type="button" onClick={()=>{setSelected(i);setCompleted(false);setStage("ranked")}} aria-pressed={selected===i} className={`inline-flex h-10 items-center justify-center whitespace-nowrap rounded-xl px-3 text-sm font-semibold transition ${selected===i?"bg-[#fdeae5] text-[#c03429]":"bg-[#d03e28] text-white hover:bg-[#b03320]"}`}>{selected===i?"選択中":"このお店で進める"}</button>
                 </div></div>
             </article>)}
-            {/* An odd number of candidates leaves a hole at the end of the grid. Rather than
-                leave it blank, the cell carries the three moves a 幹事 actually has at this
-                point, and its span is sized so the last row is always full. */}
-            <NextStepCard
-              span={`${candidates.length%2===1?"sm:col-span-1":"sm:col-span-2"} ${["2xl:col-span-3","2xl:col-span-2","2xl:col-span-1"][candidates.length%3]}`}
-              area={query.area}
-              total={providerTotal}
-              canSwap={candidates.length>1}
-              onRefine={()=>{document.getElementById("conditions")?.scrollIntoView({behavior:"smooth",block:"center"})}}
-              onSwap={()=>{setFailover(true);setSelected(0);setStage("ranked");addAudit("次の候補へ変更","現在の条件を保ったまま候補を切り替えました")}}
-              onAsk={()=>goTo("agent")}
-            />
           </div>}
           <AgentInsight status={agentStatus} plan={agentPlan} error={agentError}/>
           {searched&&<div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-xs text-[#6b635c]"><span>{providerTotal.toLocaleString()}件から条件の近い店舗を表示</span><a href="https://www.hotpepper.jp/" target="_blank" rel="noopener noreferrer" className="font-semibold text-[#d03e28] underline-offset-4 hover:underline">店舗情報提供：ホットペッパー グルメ</a></div>}
+          {candidates.length>0&&<NextSteps
+            canSwap={candidates.length>1}
+            onRefine={()=>{document.getElementById("conditions")?.scrollIntoView({behavior:"smooth",block:"center"})}}
+            onSwap={()=>{setFailover(true);setSelected(0);setStage("ranked");addAudit("次の候補へ変更","現在の条件を保ったまま候補を切り替えました")}}
+            onAsk={()=>goTo("agent")}
+          />}
           {chosen&&<><div className="mt-5 grid gap-5 rounded-[24px] border border-[#211f1d]/10 bg-white p-5 shadow-sm sm:p-6 lg:grid-cols-[.9fr_1.1fr]"><div><p className="text-xs font-semibold tracking-[.1em] text-[#c03429]">店舗の場所</p><h3 className="mt-1 text-xl font-semibold">{chosen.name}</h3><div className="mt-4 grid gap-4 sm:grid-cols-2"><div className="rounded-2xl bg-[#fdf6ef] p-4"><p className="text-xs font-semibold text-[#6b635c]">住所</p><p className="mt-1 text-sm leading-6 text-[#3a342f]">{chosen.address}</p><p className="mt-3 text-xs font-semibold text-[#6b635c]">アクセス</p><p className="mt-1 text-sm leading-6 text-[#3a342f]">{chosen.access}</p></div><div className="flex flex-col justify-center gap-2 rounded-2xl border border-[#211f1d]/10 p-4"><p className="text-xs font-semibold text-[#6b635c]">地図で開く</p><MapLinks address={chosen.address}/></div></div><a href={chosen.url} target="_blank" rel="noopener noreferrer" className="mt-4 inline-flex min-h-11 items-center gap-2 text-sm font-semibold text-[#d03e28] underline-offset-4 hover:underline">店舗ページで詳細・空席を確認<ExternalLink className="size-4"/></a></div><VenueMap address={chosen.address} label={chosen.name}/></div>
           <CreateGroup title={`${query.purpose}のグループ`} initial={{venueName:chosen.name,address:chosen.address,date:eventDate,time:eventTime,people:query.people,price:chosen.estimatedPrice||query.budget,status:"planning",bookingReference:"",note:"",website:chosen.url}}/>
-          <div className="mt-5 grid gap-4 rounded-[24px] border border-[#211f1d]/10 bg-white p-5 shadow-sm sm:p-6 xl:grid-cols-[1.1fr_.9fr_auto] xl:items-center"><div className="flex items-center gap-2"><span className="grid size-9 place-items-center rounded-xl bg-[#fdeae5] text-[#d03e28]"><Users className="size-4"/></span><div><p className="text-sm font-semibold">プランを確定して共有</p><p className="text-xs text-[#6b635c]">参加者用グループとカレンダー予定をまとめて準備できます</p></div></div><div className="grid grid-cols-3 gap-3 text-center"><MiniStat label="参加予定" value={`${query.people}名`}/><MiniStat label="予算目安" value={chosen.budgetLabel}/><MiniStat label="候補順位" value={`${selected+1}位`}/></div><Button onClick={()=>setApprovalOpen(true)} className="h-12 rounded-xl bg-[#d03e28] px-6 text-white hover:bg-[#b03320]">予定を確認する<ArrowRight className="ml-2 size-4"/></Button></div></>}
+          <div className="mt-5 grid gap-4 rounded-[24px] border border-[#211f1d]/10 bg-white p-5 shadow-sm sm:p-6 xl:grid-cols-[minmax(0,1fr)_auto_auto] xl:items-center"><div className="flex items-center gap-2"><span className="grid size-9 place-items-center rounded-xl bg-[#fdeae5] text-[#d03e28]"><Users className="size-4"/></span><div><p className="text-sm font-semibold">プランを確定して共有</p><p className="text-xs text-[#6b635c]">参加者用グループとカレンダー予定をまとめて準備できます</p></div></div><div className="flex flex-wrap gap-x-6 gap-y-2"><MiniStat label="参加予定" value={`${query.people}名`}/><MiniStat label="予算目安" value={chosen.budgetLabel}/><MiniStat label="候補順位" value={`${selected+1}位`}/></div><Button onClick={()=>setApprovalOpen(true)} className="h-12 rounded-xl bg-[#d03e28] px-6 text-white hover:bg-[#b03320]">予定を確認する<ArrowRight className="ml-2 size-4"/></Button></div></>}
         </section>
       </div>
 
@@ -352,23 +346,26 @@ export default function Home() {
 }
 
 function Field({label,children}:{label:string;children:React.ReactNode}){return <div className="min-w-0"><Label className="mb-2 block text-[12px] font-semibold tracking-wide text-white/80">{label}</Label>{children}</div>}
-function NextStepCard({span,area,total,canSwap,onRefine,onSwap,onAsk}:{span:string;area:string;total:number;canSwap:boolean;onRefine:()=>void;onSwap:()=>void;onAsk:()=>void}){
+/**
+ * Refining the search belongs beside the results, not inside them: a listing grid is a feed
+ * of one kind of thing, and a card that is not a venue reads as filler. The leftover cell at
+ * the end of the grid is left as it is, which is what listing grids do.
+ */
+function NextSteps({canSwap,onRefine,onSwap,onAsk}:{canSwap:boolean;onRefine:()=>void;onSwap:()=>void;onAsk:()=>void}){
   const actions:{label:string;detail:string;icon:React.ElementType;onClick:()=>void;disabled?:boolean}[]=[
-    {label:"条件を変えて探し直す",detail:"予算・人数・個室の条件を調整します",icon:Settings2,onClick:onRefine},
-    {label:"別の候補を先頭にする",detail:canSwap?"満席だったときの切り替えに使えます":"候補が1件のため切り替えできません",icon:RefreshCw,onClick:onSwap,disabled:!canSwap},
-    {label:"AIの比較コメントを見る",detail:"候補ごとの向き・不向きを読み比べます",icon:Sparkles,onClick:onAsk},
+    {label:"条件を変えて探す",detail:"予算・人数・個室などを調整します",icon:Settings2,onClick:onRefine},
+    {label:"候補を切り替える",detail:canSwap?"満席だったときに使えます":"候補が1件のため切り替えできません",icon:RefreshCw,onClick:onSwap,disabled:!canSwap},
+    {label:"AIの比較を見る",detail:"候補ごとの向き・不向きを読みます",icon:Sparkles,onClick:onAsk},
   ];
-  return <section aria-label="次にできること" className={`${span} flex flex-col justify-center rounded-[22px] border border-dashed border-[#d03e28]/25 bg-[#fdf6ef] p-5`}>
-    <p className="text-[11px] font-semibold tracking-[.12em] text-[#c03429]">NEXT STEP</p>
-    <h3 className="jp-text mt-1 text-lg font-semibold tracking-tight">決めきれないときは</h3>
-    <p className="jp-text mt-1 text-xs leading-5 text-[#6b635c]">{area}の{total.toLocaleString()}件から条件の近い順に並べています。並びは条件を変えるたびに組み直されます。</p>
-    <ul className="mt-4 space-y-2">
+  return <section aria-label="次にできること" className="mt-4 rounded-[24px] border border-[#211f1d]/10 bg-white p-5 shadow-sm sm:p-6">
+    <h3 className="text-sm font-semibold">次にできること</h3>
+    <ul className="mt-3 grid gap-2 sm:grid-cols-3">
       {actions.map(({label,detail,icon:Icon,onClick,disabled})=><li key={label}>
-        <button type="button" onClick={onClick} disabled={disabled} aria-describedby={`next-${label}`} className="flex w-full items-center gap-3 rounded-xl border border-[#211f1d]/10 bg-white p-3 text-left transition hover:border-[#d03e28]/40 hover:bg-white disabled:hover:border-[#211f1d]/10">
-          <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-[#fdeae5] text-[#d03e28]"><Icon className="size-4"/></span>
+        <button type="button" onClick={onClick} disabled={disabled} className="flex h-full w-full items-center gap-3 rounded-xl border border-[#211f1d]/10 bg-[#fdf6ef] p-3 text-left transition hover:border-[#d03e28]/40 hover:bg-[#fdeae5] disabled:hover:border-[#211f1d]/10 disabled:hover:bg-[#fdf6ef]">
+          <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-white text-[#d03e28]"><Icon className="size-4"/></span>
           <span className="min-w-0 flex-1">
-            <span className="block text-sm font-semibold">{label}</span>
-            <span id={`next-${label}`} className="jp-text block text-xs leading-5 text-[#6b635c]">{detail}</span>
+            <span className="jp-text block text-sm font-semibold">{label}</span>
+            <span className="jp-text block text-xs leading-5 text-[#6b635c]">{detail}</span>
           </span>
           <ChevronRight className="size-4 shrink-0 text-[#6b635c]"/>
         </button>
