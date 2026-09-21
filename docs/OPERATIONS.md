@@ -24,14 +24,17 @@
 | `agent_fallback` | ローカル評価へ切り替え。`reason`が`circuit_open`ならブレーカ作動中、`daily_limit`なら上限到達 |
 | `agent_cache_hit` | キャッシュ応答。外部呼び出しなし。`tier`が`memory`ならプロセス内、`shared`なら`encopa_ai_cache`由来 |
 | `agent_cache_read_failed` / `agent_cache_write_failed` | キャッシュ処理の失敗。リクエストは継続します（外部モデル呼び出しへ縮退） |
-| `agent_prompt_cache_rejected` | ゲートウェイがプロンプトキャッシュ指定を拒否。指定なしで再試行しています |
+| `agent_request_rejected` | ゲートウェイが4xxで拒否。`providerCode`（`code/type/param`）が原因を示します。最小構成で再試行します |
+| `agent_limit_unavailable` | 上限の計上自体に失敗（多くはDB障害）。安全側でローカル評価へ倒しています |
 | `request_failed` | 共有機能の想定外エラー。例外クラス名のみ記録します |
 
 利用者から申告されたエラーIDは、レスポンスの`traceId`および画面の「エラーID」と一致します。ログを`traceId`で検索してください。
 
 `agent_call_failed`が連続3回に達すると60秒間、外部モデルの呼び出し自体を停止します（プロセス内メモリで保持するため、インスタンスごとに独立して動作します）。
 
-`agent_cache_read_failed`や`agent_call_failed`の`reason`が`daily_limit`で急増した場合は、データベース側の障害を疑ってください。DBが応答しないと、日次上限の計上に失敗して安全側（ローカル評価）へ倒れます。
+`agent_limit_unavailable`が出ている場合はデータベース障害です。上限に達したわけではないので、`ENCOPA_AI_DAILY_LIMIT`を上げても解決しません。
+
+**APIキー投入直後に確認すること**：最初の検索で`agent_call_ok`が出れば正常です。`agent_request_rejected`が出た場合は`providerCode`の`param`が拒否されたパラメータ名を示します（最小構成での再試行も失敗した場合は、`app/api/agent/route.ts`の`buildRequest()`を調整してください）。`agent_call_failed`で`reason`が`orca_http_401`なら鍵、`orca_http_404`ならモデル名（`MODEL`定数）を確認してください。
 
 ## キャッシュ運用
 

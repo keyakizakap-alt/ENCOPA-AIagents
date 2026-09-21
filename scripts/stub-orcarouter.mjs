@@ -41,15 +41,19 @@ createServer(async (req, res) => {
   if (script.remaining > 0) {
     script = { ...script, remaining: script.remaining - 1 };
     if (script.mode === 'timeout') return; // hold the socket open until the client aborts
-    return json(res, script.mode === 'http_400' ? 400 : 500, { error: { message: 'stub failure' } });
+    return json(res, script.mode === 'http_400' ? 400 : 500, { error: { message: 'stub failure', code: 'stub_code', param: 'max_tokens' } });
   }
   if (script.mode === 'always_400') return json(res, 400, { error: { message: 'stub rejects this request' } });
   if (script.mode === 'always_500') return json(res, 500, { error: { message: 'stub is down' } });
   if (script.mode === 'always_timeout') return;
 
+  // Providers disagree on the completion shape, so the stub can return either.
+  const content = script.contentParts
+    ? [{ type: 'text', text: 'パーツ形式の説明です。' }]
+    : script.content ?? 'スタブが返した評価方針の説明です。';
   return json(res, 200, {
     model: script.model ?? 'stub/model-a',
-    choices: [{ message: { content: script.content ?? 'スタブが返した評価方針の説明です。' } }],
+    choices: [{ message: { content } }],
     usage: { prompt_tokens_details: { cached_tokens: script.cachedTokens ?? 0 } },
   });
 }).listen(port, '127.0.0.1', () => {

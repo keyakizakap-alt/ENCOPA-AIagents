@@ -35,6 +35,8 @@ export TEST_CREATE_KEY="$ENCOPA_CREATE_KEY"
 export ORCAROUTER_API_KEY="integration-test-key"
 export ENCOPA_ORCA_URL="${stub_base}/v1/chat/completions"
 export ENCOPA_AI_PROMPT_CACHE="1"
+# Low enough that the per-client ceiling can be exercised; the test that trips it runs last.
+export ENCOPA_AI_CLIENT_HOURLY_LIMIT="25"
 export TEST_STUB_BASE_URL="$stub_base"
 export TEST_DB_URL="$TURSO_DATABASE_URL"
 

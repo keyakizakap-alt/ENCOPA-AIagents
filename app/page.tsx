@@ -41,6 +41,12 @@ const venuePool: VenueBase[] = [
   { id:"tsubaki", name:"小料理 椿", genre:"割烹・小料理", price:5800, capacity:16, base:88, conversation:99, access:71, value:76, privateRoom:true, dietary:true, purpose:["送別会","新年会","懇親会"], tags:["少人数","静かな個室","料理重視"], minutes:10, risk:"最大16名まで", color:"from-[#8b6150] to-[#633e32]" },
 ];
 
+// Mirrors the enumerations app/api/agent/route.ts validates against. Anything outside
+// them is rejected server-side, so the picker and the restore guard share one list.
+const PURPOSES = ["忘年会","新年会","歓迎会","送別会","懇親会","打ち上げ"] as const;
+const PRIORITIES = ["balance","conversation","cost","access"] as const;
+const STAGES = ["draft","ranked","collecting","awaiting_approval","scheduled"] as const;
+
 const steps = [["条件","完了"],["候補比較","いまここ"],["みんなに確認","次"],["幹事が承認",""],["予約・予定確保",""]];
 const priorityLabels: Record<Priority,string> = { balance:"バランス", conversation:"会話しやすさ", cost:"予算", access:"移動しやすさ" };
 
@@ -95,6 +101,13 @@ export default function Home() {
     setQuery(next);
     try {
       const response=await fetch("/api/agent",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(next)});
+      // A rejected request is a different problem from an unreachable one, and reporting
+      // both as "通信に失敗" hid input mistakes behind a network message.
+      if(response.status>=400&&response.status<500){
+        setRouter({route:"deterministic-fallback",model:null,summary:"入力条件を確認できなかったため、ローカル評価で候補を更新しました。条件を選び直すと外部モデルの評価に戻ります。",tokenBudget:0});
+        addAudit("条件を再確認","入力条件が受理されず、ローカル評価で継続");
+        return;
+      }
       if(!response.ok)throw new Error("request_failed");
       const data=await response.json() as Partial<RouterState>;
       setRouter({route:data.route??"deterministic-fallback",model:data.model??null,summary:data.summary??"評価方針を更新しました。",traceId:data.traceId,latencyMs:data.latencyMs,tokenBudget:data.tokenBudget,cached:data.cached===true});
@@ -116,30 +129,42 @@ export default function Home() {
 
   const downloadCalendar=()=>{
     const start=new Date(`${eventDate}T${eventTime}:00+09:00`);
+    // Date.toISOString() throws on an invalid date, which used to abort the click handler
+    // silently: the stage still advanced and claimed a file had been written.
+    if(Number.isNaN(start.getTime())){
+      setSearchError("開催日と開始時刻を入力すると、予定ファイルを作成できます。");
+      setSettingsOpen(true);
+      return false;
+    }
     const end=new Date(start.getTime()+2*60*60*1000);
     const stamp=(date:Date)=>date.toISOString().replace(/[-:]/g,"").replace(/\.\d{3}Z$/,"Z");
     const ics=["BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//ENCOPA//JA","BEGIN:VEVENT",`UID:${crypto.randomUUID()}@encopa`,`DTSTAMP:${stamp(new Date())}`,`DTSTART:${stamp(start)}`,`DTEND:${stamp(end)}`,`SUMMARY:${escapeIcs(query.purpose)}｜${escapeIcs(chosen?.name??"会場未定")}`,`LOCATION:${escapeIcs(query.area)}`,`DESCRIPTION:${escapeIcs(`ENCOPAで調整。参加予定 ${query.people}名。予約状況は主催者に確認してください。`)}`,"END:VEVENT","END:VCALENDAR"].join("\r\n");
     const url=URL.createObjectURL(new Blob([ics],{type:"text/calendar;charset=utf-8"}));
     const link=document.createElement("a");link.href=url;link.download="encopa-event.ics";link.click();URL.revokeObjectURL(url);
+    return true;
   };
 
   const advanceWorkflow=()=>{
     if(stage==="scheduled"){downloadCalendar();return}
     if(stage==="collecting"){setStage("awaiting_approval");addAudit("参加者回答を集約",`${query.people}名分のデモ回答を反映`);return}
-    if(stage==="awaiting_approval"){setStage("scheduled");addAudit("幹事が最終承認","予定ファイルを作成。外部予約は未実行");downloadCalendar();return}
+    // The audit entry is only written when a file was actually produced.
+    if(stage==="awaiting_approval"){if(!downloadCalendar())return;setStage("scheduled");addAudit("幹事が最終承認","予定ファイルを作成。外部予約は未実行");return}
     setCompleted(true);setStage("collecting");addAudit("デモを開始","予約権限なし・回答収集のみ");
   };
 
   useEffect(()=>{
     try {
       const saved=localStorage.getItem("encopa-session-v1");
-      if(saved){
-        const value=JSON.parse(saved);
+      // Stored by an older build, hand-edited, or simply corrupt: every field is checked
+      // before it is restored. An out-of-vocabulary purpose used to make every search fail
+      // server-side, and an unknown stage left the stepper and progress bar undefined.
+      const value=restoreSession(saved);
+      if(value){
         // Restore the browser-owned draft once after hydration.
         // eslint-disable-next-line react-hooks/set-state-in-effect
-        if(value.query){setQuery(value.query);setPurpose(value.query.purpose);setArea(value.query.area);setBudget(String(value.query.budget));setPeople(String(value.query.people));setPriority(value.query.priority);setPrivateRoom(value.query.privateRoom);setDietary(value.query.dietary);setSearched(true)}
+        if(value.query){const q=value.query;setQuery(q);setPurpose(q.purpose);setArea(q.area);setBudget(String(q.budget));setPeople(String(q.people));setPriority(q.priority);setPrivateRoom(q.privateRoom);setDietary(q.dietary);setSearched(true)}
         if(value.stage){setStage(value.stage);setCompleted(value.stage==="collecting"||value.stage==="awaiting_approval"||value.stage==="scheduled")}
-        if(Array.isArray(value.audit))setAudit(value.audit);
+        if(value.audit)setAudit(value.audit);
         if(value.eventDate)setEventDate(value.eventDate);
         if(value.eventTime)setEventTime(value.eventTime);
       }
@@ -197,7 +222,7 @@ export default function Home() {
             <div className="rounded-[22px] border border-white/12 bg-white/[.07] p-5 text-cream"><p className="text-xs text-white/72">現在の入力上限</p><p className="mt-2 text-3xl font-semibold tracking-tight">{total.toLocaleString()}円</p><div className="mt-5 space-y-3 text-sm"><div className="flex justify-between"><span className="text-white/72">開催</span><span>{eventDate.slice(5).replace("-","/")} {eventTime}</span></div><div className="flex justify-between"><span className="text-white/72">優先</span><span>{priorityLabels[priority]}</span></div><div className="flex justify-between"><span className="text-white/72">進め方</span><span>{autonomy==="suggest"?"提案のみ":autonomy==="prepare"?"予約直前まで":"承認後に実行"}</span></div><div className="border-t border-white/10 pt-3 text-[12px] leading-5 text-white/72">個人名をモデルへ送らず、集約条件だけを評価します。</div></div></div>
           </div>
           <div className="grid gap-3 border-t border-white/10 bg-brand-deep p-4 sm:grid-cols-2 sm:p-5 xl:grid-cols-[1fr_1.25fr_.75fr_.65fr_auto]">
-            <Field label="目的"><Select value={purpose} onValueChange={setPurpose}><SelectTrigger className="h-12 w-full rounded-xl border-white/10 bg-white text-ink"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="忘年会">忘年会</SelectItem><SelectItem value="新年会">新年会</SelectItem><SelectItem value="歓迎会">歓迎会</SelectItem><SelectItem value="送別会">送別会</SelectItem><SelectItem value="懇親会">懇親会</SelectItem><SelectItem value="打ち上げ">打ち上げ</SelectItem></SelectContent></Select></Field>
+            <Field label="目的"><Select value={purpose} onValueChange={setPurpose}><SelectTrigger className="h-12 w-full rounded-xl border-white/10 bg-white text-ink"><SelectValue/></SelectTrigger><SelectContent>{PURPOSES.map(item=><SelectItem key={item} value={item}>{item}</SelectItem>)}</SelectContent></Select></Field>
             <Field label="エリア"><div className="relative"><MapPin className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-ink"/><Input value={area} onChange={e=>setArea(e.target.value)} className="h-12 rounded-xl border-white/10 bg-white pl-9 text-base"/></div></Field>
             <Field label="予算 / 人"><div className="relative"><Input inputMode="numeric" value={budget} onChange={e=>setBudget(e.target.value.replace(/\D/g,""))} className="h-12 rounded-xl border-white/10 bg-white pr-9 text-base"/><span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-ink">円</span></div></Field>
             <Field label="人数"><div className="relative"><Input inputMode="numeric" value={people} onChange={e=>setPeople(e.target.value.replace(/\D/g,""))} className="h-12 rounded-xl border-white/10 bg-white pr-9 text-base"/><span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-ink">名</span></div></Field>
@@ -281,4 +306,44 @@ function CheckCard({icon:Icon,title,value}:{icon:React.ElementType;title:string;
 function AgentAction({text,done,active}:{text:string;done?:boolean;active?:boolean}){return <div className="flex items-center gap-2.5"><span className={`grid size-5 place-items-center rounded-full ${done?"bg-sand text-brand":active?"bg-accent-bright text-white":"border border-white/25 text-white/65"}`}>{done?<Check className="size-3"/>:<span className="size-1.5 rounded-full bg-current"/>}</span><span className={active?"font-semibold":"text-white/70"}>{text}</span></div>}
 function SettingSwitch({label,description,checked,onCheckedChange}:{label:string;description:string;checked:boolean;onCheckedChange:(v:boolean)=>void}){return <div className="flex items-center justify-between gap-4 rounded-2xl border border-ink/10 bg-white p-4"><div><p className="text-sm font-semibold">{label}</p><p className="mt-1 text-xs text-muted-ink">{description}</p></div><Switch checked={checked} onCheckedChange={onCheckedChange}/></div>}
 function ScorePart({label,value}:{label:string;value:number}){return <div className="text-center"><p className="text-[10px] text-muted-ink">{label}</p><p className="mt-1 text-sm font-bold text-brand">{value}</p></div>}
+type SavedSession = {query?:Query; stage?:Stage; audit?:AuditEvent[]; eventDate?:string; eventTime?:string};
+
+/** Returns only the parts of a stored session that are still valid; never throws. */
+function restoreSession(raw:string|null):SavedSession|null {
+  if(!raw)return null;
+  let value:unknown;
+  try { value=JSON.parse(raw) } catch { return null }
+  if(!value||typeof value!=="object")return null;
+  const v=value as Record<string,unknown>;
+  const out:SavedSession={};
+
+  const q=v.query as Record<string,unknown>|undefined;
+  if(q&&typeof q==="object"
+    &&(PURPOSES as readonly string[]).includes(String(q.purpose))
+    &&(PRIORITIES as readonly string[]).includes(String(q.priority))
+    &&typeof q.area==="string"&&q.area.trim()&&q.area.length<=80
+    &&Number.isFinite(Number(q.budget))&&Number(q.budget)>=1000&&Number(q.budget)<=30000
+    &&Number.isFinite(Number(q.people))&&Number(q.people)>=2&&Number(q.people)<=200){
+    out.query={purpose:String(q.purpose),area:q.area,budget:Number(q.budget),people:Number(q.people),priority:q.priority as Priority,privateRoom:q.privateRoom===true,dietary:q.dietary===true};
+  }
+  if((STAGES as readonly string[]).includes(String(v.stage)))out.stage=v.stage as Stage;
+  if(Array.isArray(v.audit)){
+    const audit=v.audit
+      .filter((e):e is AuditEvent=>!!e&&typeof e==="object"&&["id","label","detail"].every(k=>typeof (e as Record<string,unknown>)[k]==="string"))
+      .slice(0,6)
+      .map(e=>({id:e.id.slice(0,64),label:e.label.slice(0,80),detail:e.detail.slice(0,160)}));
+    if(audit.length)out.audit=audit;
+  }
+  if(isCalendarDate(v.eventDate))out.eventDate=v.eventDate as string;
+  if(typeof v.eventTime==="string"&&/^([01]\d|2[0-3]):[0-5]\d$/.test(v.eventTime))out.eventTime=v.eventTime;
+  return out;
+}
+
+/** A syntactically valid date that also exists in the calendar (rejects 2026-02-30). */
+function isCalendarDate(value:unknown):value is string {
+  if(typeof value!=="string"||!/^\d{4}-\d{2}-\d{2}$/.test(value))return false;
+  const parsed=new Date(`${value}T12:00:00Z`);
+  return !Number.isNaN(parsed.getTime())&&parsed.toISOString().slice(0,10)===value;
+}
+
 function escapeIcs(value:string){return value.replace(/\\/g,"\\\\").replace(/,/g,"\\,").replace(/;/g,"\\;").replace(/\n/g,"\\n")}

@@ -9,8 +9,8 @@ const criteria={purpose:'忘年会',area:'長崎駅周辺',budget:5500,people:18
 // A distinct area per test keeps each one on its own cache key.
 const withArea=area=>({...criteria,area});
 
-async function post(body,{origin=base,contentType='application/json',raw}={}){
- const r=await fetch(`${base}/api/agent`,{method:'POST',headers:{...(contentType?{'Content-Type':contentType}:{}),...(origin?{Origin:origin}:{})},body:raw??JSON.stringify(body)});
+async function post(body,{origin=base,contentType='application/json',raw,client}={}){
+ const r=await fetch(`${base}/api/agent`,{method:'POST',headers:{...(contentType?{'Content-Type':contentType}:{}),...(origin?{Origin:origin}:{}),...(client?{'X-Forwarded-For':client}:{})},body:raw??JSON.stringify(body)});
  return {status:r.status,body:await r.json().catch(()=>null),cacheControl:r.headers.get('cache-control')};
 }
 /** Scripts the stub router and clears its recorded requests. */
@@ -117,16 +117,40 @@ test('prompt cache markers are sent, and a gateway that rejects them is retried 
  assert.equal(sent.body.messages[0].role,'system');
  assert.equal(sent.body.messages[1].role,'user');
 
- // A 4xx while the markers are on costs one clean retry without them, not the search.
+ // A 4xx costs one clean retry with a minimal body, not the search.
  await control({mode:'always_400'});
  const rejected=await post(withArea('マーカー拒否エリア'));
  const attempts=await recorded();
  assert.equal(attempts.length,2,'exactly one retry');
  assert.ok(attempts[0].body.prompt_cache_key,'the first attempt carried the markers');
  assert.equal(attempts[1].body.prompt_cache_key,undefined,'the retry dropped them');
- assert.equal(typeof attempts[1].body.messages[0].content,'string');
+ assert.equal(typeof attempts[1].body.messages[0].content,'string','the retry sends a plain system string');
+ assert.equal(attempts[1].body.temperature,undefined,'the retry drops a temperature a reasoning model would reject');
+ assert.equal(attempts[1].body.max_tokens,undefined);
+ assert.equal(attempts[1].body.max_completion_tokens,220,'the retry uses the newer token field');
  assert.equal(rejected.body.route,'deterministic-fallback');
  assert.equal(rejected.body.tokenBudget,0);
+});
+
+test('a request rejected only for its shape succeeds on the compatibility retry',async()=>{
+ // One 400, then the stub accepts: first contact with a model that refuses the default
+ // sampling parameters must recover rather than look like an outage.
+ await control({mode:'http_400',remaining:1,content:'互換リトライ後の成功。'});
+ const r=await post(withArea('互換リトライエリア'));
+ assert.equal(r.status,200);
+ assert.equal(r.body.route,'orcarouter/auto');
+ assert.equal(r.body.summary,'互換リトライ後の成功。');
+ const attempts=await recorded();
+ assert.equal(attempts.length,2);
+ assert.equal(attempts[1].body.max_completion_tokens,220);
+});
+
+test('a completion returned as content parts is read, not discarded',async()=>{
+ await control({mode:'ok',contentParts:true});
+ const r=await post(withArea('コンテンツパーツエリア'));
+ assert.equal(r.status,200);
+ assert.equal(r.body.route,'orcarouter/auto');
+ assert.equal(r.body.summary,'パーツ形式の説明です。');
 });
 
 test('a transient failure is retried and a permanent one is not',async()=>{
@@ -145,6 +169,30 @@ test('the model completion is sanitized before it reaches the client',async()=>{
  assert.ok(!r.body.summary.includes('javascript:'),'link schemes are removed');
  assert.ok(!/[\u0000-\u001f]/.test(r.body.summary),'control characters are removed');
  assert.ok(r.body.summary.includes('方針を更新しました。'));
+});
+
+test('one client cannot drain the shared daily budget',async()=>{
+ // Presents its own forwarded address, so exhausting that client's hourly ceiling does
+ // not block the other tests. Runs before the breaker test, which would otherwise stop
+ // every call short of the limiter.
+ const client='203.0.113.7';
+ await control({mode:'ok',content:'上限検証。'});
+ let tripped=false,calls=0;
+ for(let i=0;i<60&&!tripped;i+=1){
+  const r=await post(withArea(`上限検証${i}`),{client});
+  assert.equal(r.status,200,'the ceiling degrades the answer, it does not fail the request');
+  calls+=1;
+  if(/短時間に検索が続いた/.test(r.body.summary))tripped=true;
+ }
+ assert.ok(tripped,`the per-client ceiling engaged after ${calls} calls`);
+ const before=(await recorded()).length;
+ const blocked=await post(withArea('上限検証オーバー'),{client});
+ assert.equal(blocked.body.route,'deterministic-fallback');
+ assert.equal((await recorded()).length,before,'no further request reached the router');
+
+ // A different client is unaffected by that ceiling.
+ const other=await post(withArea('別クライアント'),{client:'198.51.100.4'});
+ assert.equal(other.body.route,'orcarouter/auto');
 });
 
 test('the breaker stops calling the router after repeated failures',async()=>{
