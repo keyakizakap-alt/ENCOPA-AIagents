@@ -278,7 +278,7 @@ export default function Home() {
               <span className="inline-block">条件を変えるたび、</span><br className="hidden sm:block"/><span className="inline-block">候補と理由を<wbr/>組み直します。</span></h1><p className="mt-4 max-w-2xl text-[15px] leading-7 text-[#6b635c]">候補を比べて、予約内容をみんなで共有。アレルギーの確認も、待ち合わせの連絡も、この会のグループで。</p></div>
             <div className="rounded-[22px] border border-[#ecdfd1] bg-[#fdf6ef] p-5 text-[#211f1d]"><p className="text-xs text-[#6b635c]">予算の目安</p><p className="mt-2 text-3xl font-semibold tracking-tight text-[#211f1d]">{total.toLocaleString()}円</p><div className="mt-5 space-y-3 text-sm"><div className="flex justify-between"><span className="text-[#6b635c]">開催</span><span>{eventDate.slice(5).replace("-","/")} {eventTime}</span></div><div className="flex justify-between"><span className="text-[#6b635c]">優先</span><span>{priorityLabels[priority]}</span></div><div className="flex justify-between"><span className="text-[#6b635c]">アレルギー</span><span>{hasAllergy?`${allergy.items.length}項目を確認`:allergy.status==="none"?"なし":"未設定"}</span></div><div className="border-t border-[#e3d5c6] pt-3 text-[12px] leading-5 text-[#6b635c]">選んだ条件とプランは、いつでも参加者へ共有できます。</div></div></div>
           </div>
-          <div className="grid gap-3 border-t border-[#e3d5c6] bg-[#f6ece1] p-4 sm:grid-cols-2 sm:p-5 lg:grid-cols-3 2xl:grid-cols-[repeat(5,minmax(0,1fr))_auto] 2xl:items-end 2xl:gap-4">
+          <div id="conditions" className="scroll-mt-24 grid gap-3 border-t border-[#e3d5c6] bg-[#f6ece1] p-4 sm:grid-cols-2 sm:p-5 lg:grid-cols-3 2xl:grid-cols-[repeat(5,minmax(0,1fr))_auto] 2xl:items-end 2xl:gap-4">
             <Field label="目的"><Select value={purpose} onValueChange={setPurpose}>{/* data-[size=default]:h-12 is needed because the component sets its height through a
                 data-attribute variant, which a plain h-12 cannot override. */}
               <SelectTrigger className="h-12 w-full rounded-xl border-[#e3d5c6] bg-white px-3 text-base font-medium text-[#211f1d] data-[size=default]:h-12"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="忘年会">忘年会</SelectItem><SelectItem value="新年会">新年会</SelectItem><SelectItem value="歓迎会">歓迎会</SelectItem><SelectItem value="送別会">送別会</SelectItem><SelectItem value="懇親会">懇親会</SelectItem><SelectItem value="打ち上げ">打ち上げ</SelectItem></SelectContent></Select></Field>
@@ -307,6 +307,18 @@ export default function Home() {
                   <button type="button" onClick={()=>{setSelected(i);setCompleted(false);setStage("ranked")}} aria-pressed={selected===i} className={`inline-flex h-10 items-center justify-center whitespace-nowrap rounded-xl px-3 text-sm font-semibold transition ${selected===i?"bg-[#fdeae5] text-[#c03429]":"bg-[#d03e28] text-white hover:bg-[#b03320]"}`}>{selected===i?"選択中":"このお店で進める"}</button>
                 </div></div>
             </article>)}
+            {/* An odd number of candidates leaves a hole at the end of the grid. Rather than
+                leave it blank, the cell carries the three moves a 幹事 actually has at this
+                point, and its span is sized so the last row is always full. */}
+            <NextStepCard
+              span={`${candidates.length%2===1?"sm:col-span-1":"sm:col-span-2"} ${["2xl:col-span-3","2xl:col-span-2","2xl:col-span-1"][candidates.length%3]}`}
+              area={query.area}
+              total={providerTotal}
+              canSwap={candidates.length>1}
+              onRefine={()=>{document.getElementById("conditions")?.scrollIntoView({behavior:"smooth",block:"center"})}}
+              onSwap={()=>{setFailover(true);setSelected(0);setStage("ranked");addAudit("次の候補へ変更","現在の条件を保ったまま候補を切り替えました")}}
+              onAsk={()=>goTo("agent")}
+            />
           </div>}
           <AgentInsight status={agentStatus} plan={agentPlan} error={agentError}/>
           {searched&&<div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-xs text-[#6b635c]"><span>{providerTotal.toLocaleString()}件から条件の近い店舗を表示</span><a href="https://www.hotpepper.jp/" target="_blank" rel="noopener noreferrer" className="font-semibold text-[#d03e28] underline-offset-4 hover:underline">店舗情報提供：ホットペッパー グルメ</a></div>}
@@ -340,7 +352,31 @@ export default function Home() {
 }
 
 function Field({label,children}:{label:string;children:React.ReactNode}){return <div className="min-w-0"><Label className="mb-2 block text-[12px] font-semibold tracking-wide text-white/80">{label}</Label>{children}</div>}
-function MiniStat({label,value}:{label:string;value:string}){return <div><p className="text-[11px] text-[#6b635c]">{label}</p><p className="mt-1 text-sm font-semibold">{value}</p></div>}
+function NextStepCard({span,area,total,canSwap,onRefine,onSwap,onAsk}:{span:string;area:string;total:number;canSwap:boolean;onRefine:()=>void;onSwap:()=>void;onAsk:()=>void}){
+  const actions:{label:string;detail:string;icon:React.ElementType;onClick:()=>void;disabled?:boolean}[]=[
+    {label:"条件を変えて探し直す",detail:"予算・人数・個室の条件を調整します",icon:Settings2,onClick:onRefine},
+    {label:"別の候補を先頭にする",detail:canSwap?"満席だったときの切り替えに使えます":"候補が1件のため切り替えできません",icon:RefreshCw,onClick:onSwap,disabled:!canSwap},
+    {label:"AIの比較コメントを見る",detail:"候補ごとの向き・不向きを読み比べます",icon:Sparkles,onClick:onAsk},
+  ];
+  return <section aria-label="次にできること" className={`${span} flex flex-col justify-center rounded-[22px] border border-dashed border-[#d03e28]/25 bg-[#fdf6ef] p-5`}>
+    <p className="text-[11px] font-semibold tracking-[.12em] text-[#c03429]">NEXT STEP</p>
+    <h3 className="jp-text mt-1 text-lg font-semibold tracking-tight">決めきれないときは</h3>
+    <p className="jp-text mt-1 text-xs leading-5 text-[#6b635c]">{area}の{total.toLocaleString()}件から条件の近い順に並べています。並びは条件を変えるたびに組み直されます。</p>
+    <ul className="mt-4 space-y-2">
+      {actions.map(({label,detail,icon:Icon,onClick,disabled})=><li key={label}>
+        <button type="button" onClick={onClick} disabled={disabled} aria-describedby={`next-${label}`} className="flex w-full items-center gap-3 rounded-xl border border-[#211f1d]/10 bg-white p-3 text-left transition hover:border-[#d03e28]/40 hover:bg-white disabled:hover:border-[#211f1d]/10">
+          <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-[#fdeae5] text-[#d03e28]"><Icon className="size-4"/></span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-semibold">{label}</span>
+            <span id={`next-${label}`} className="jp-text block text-xs leading-5 text-[#6b635c]">{detail}</span>
+          </span>
+          <ChevronRight className="size-4 shrink-0 text-[#6b635c]"/>
+        </button>
+      </li>)}
+    </ul>
+  </section>;
+}
+function MiniStat({label,value}:{label:string;value:string}){return <div className="min-w-0"><p className="text-[11px] text-[#6b635c]">{label}</p><p className="mt-1 whitespace-nowrap text-[13px] font-semibold sm:text-sm">{value}</p></div>}
 function StatusRow({icon:Icon,title,detail,done,active}:{icon:React.ElementType;title:string;detail:string;done?:boolean;active?:boolean}){return <div className={`flex items-center gap-3 rounded-xl p-3 ${active?"bg-[#fdeae5]":""}`}><span className={`grid size-9 place-items-center rounded-xl ${done?"bg-[#e6f3ec] text-[#2f7d55]":active?"bg-[#d03e28] text-white":"bg-[#f6ece1] text-[#6b635c]"}`}>{done?<Check className="size-4"/>:<Icon className="size-4"/>}</span><div className="min-w-0 flex-1"><p className="text-sm font-semibold">{title}</p><p className="truncate text-xs text-[#6b635c]">{detail}</p></div>{active&&<span className="size-2 rounded-full bg-[#ef8354]"/>}</div>}
 function CheckCard({icon:Icon,title,value}:{icon:React.ElementType;title:string;value:string}){return <div className="rounded-2xl border border-[#211f1d]/10 bg-white p-3"><Icon className="size-4 text-[#d03e28]"/><p className="mt-3 text-xs font-semibold">{title}</p><p className="mt-1 text-[11px] leading-4 text-[#6b635c]">{value}</p></div>}
 function SettingSwitch({label,description,checked,onCheckedChange}:{label:string;description:string;checked:boolean;onCheckedChange:(v:boolean)=>void}){return <div className="flex items-center justify-between gap-4 rounded-2xl border border-[#211f1d]/10 bg-white p-4"><div><p className="text-sm font-semibold">{label}</p><p className="mt-1 text-xs text-[#6b635c]">{description}</p></div><Switch checked={checked} onCheckedChange={onCheckedChange}/></div>}

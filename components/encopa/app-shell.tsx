@@ -28,7 +28,11 @@ export function AppShell({
 }) {
   return (
     <div className="min-h-screen bg-surface text-ink lg:grid lg:grid-cols-[248px_minmax(0,1fr)]">
-      <aside className="hidden bg-sidebar text-sidebar-ink lg:sticky lg:top-0 lg:flex lg:h-screen lg:flex-col">
+      {/* The rail is two elements on purpose: the <aside> is the grid column, so it stretches
+          to the full height of the page and the dark surface never runs out underneath the
+          content; the inner panel is what actually sticks to the top of the viewport. */}
+      <aside className="hidden bg-sidebar text-sidebar-ink lg:block">
+       <div className="sticky top-0 flex h-screen flex-col">
         <Link href="/" className="flex items-center gap-3 px-5 py-6">
           <span className="grid size-10 shrink-0 place-items-center rounded-2xl bg-brand text-white"><UtensilsCrossed className="size-5" /></span>
           <span className="min-w-0">
@@ -56,6 +60,7 @@ export function AppShell({
           <p className="flex items-center gap-2 text-[13px] font-semibold text-sand"><CalendarCheck className="size-4" />いい宴を、いいチームで。</p>
           <p className="mt-2 text-[11px] leading-5 text-sidebar-muted">人が集まる時間を、もっと価値あるものに。</p>
         </div>
+       </div>
       </aside>
 
       <div className="flex min-w-0 flex-col pb-[calc(4.5rem+env(safe-area-inset-bottom))] lg:pb-0">
