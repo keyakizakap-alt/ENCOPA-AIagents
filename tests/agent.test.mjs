@@ -6,6 +6,9 @@ import { createClient } from '@libsql/client';
 
 const base=process.env.TEST_BASE_URL||'http://localhost:3010';
 const mock=process.env.TEST_MOCK_BASE_URL||'http://127.0.0.1:3011';
+// Read from the route rather than hardcoded, so a deliberate version bump does not fail
+// this test while a broken cache key still would.
+const PLAN_VERSION=/const PLAN_VERSION = "([^"]+)"/.exec(readFileSync('app/api/agent/route.ts','utf8'))?.[1];
 
 const candidate={id:'shop-1',name:'テスト居酒屋',genre:'和食',address:'長崎県長崎市1-1',access:'長崎駅 徒歩3分',budgetLabel:'5000円',estimatedPrice:5000,partyCapacity:40,privateRoom:true,freeDrink:true,course:true,nonSmoking:'禁煙',openingHours:'17:00-23:00',closed:'日曜',score:88};
 const plan=(overrides={})=>({purpose:'懇親会',area:'長崎県',budget:5500,people:4,priority:'balance',privateRoom:false,dietary:false,candidates:[candidate],...overrides});
@@ -44,7 +47,7 @@ test('a plan written by another instance is served without calling the router',a
  // only the shared table can answer, and the mock is set to fail if it is reached.
  const body=plan({purpose:'別インスタンス検証会'});
  const fingerprint=`${candidate.id}:${candidate.score}`;
- const key=createHash('sha256').update(['v1',body.purpose,body.area,body.budget,body.people,body.priority,body.privateRoom,body.dietary,fingerprint].join('|')).digest('hex');
+ const key=createHash('sha256').update([PLAN_VERSION,body.purpose,body.area,body.budget,body.people,body.priority,body.privateRoom,body.dietary,fingerprint].join('|')).digest('hex');
  const stored={available:true,traceId:'seeded',analysisDepth:'standard',recommendedVenueId:'shop-1',summary:'別インスタンスが生成した計画。',venueAdvice:[{venueId:'shop-1',score:80,reason:'保存済み'}],confirmationChecklist:['空席を確認'],nextActions:['店舗へ連絡'],shareDraft:'共有文',resolvedModels:['seeded-model']};
  const db=createClient({url:process.env.TURSO_DATABASE_URL||'file:data/encopa.db'});
  try {
@@ -146,4 +149,62 @@ test('the landing page renders its own styles and hydrates',async()=>{
  // utility is dropped from the build, the headings silently go back to that.
  assert.ok(text.includes('line-break:strict')||text.includes('line-break: strict'),'the jp-text utility survives the build');
  assert.ok(!/class(Name)?="[^"]*\b[a-z-]+-\[#[0-9a-f]{6}\]-/.test(html),'no malformed arbitrary-value class names');
+});
+
+// --- 自己検証・自律性 ---
+const shop = (over = {}) => ({ ...candidate, ...over });
+const agentPlan = (over = {}) => post(plan(over));
+
+test('the agent checks its own plan against the data and fixes it once', async () => {
+ await control({ mode: 'faulty_plan' });
+ const before = (await observed()).count;
+ // A fresh purpose keeps this off the plan cached by the other tests.
+ const r = await agentPlan({ purpose: '自己検証テストA', privateRoom: true, candidates: [shop()] });
+ assert.equal(r.status, 200, JSON.stringify(r.body));
+ assert.equal((await observed()).count - before, 2, 'the first plan plus one revision');
+ assert.equal(r.body.selfCheck.revised, true);
+ assert.equal(r.body.selfCheck.issues, 0, 'the revision resolved every issue');
+ assert.equal(r.body.confidence, 'high');
+ // The claim that a booking was made must not survive.
+ assert.ok(!JSON.stringify(r.body).includes('予約が取れました'));
+ assert.ok(r.body.decisions.some((d) => d.step === '自己検証'));
+});
+
+test('an unfixable plan fails closed instead of reading as confident', async () => {
+ await control({ mode: 'unfixable_plan' });
+ const r = await agentPlan({ purpose: '自己検証テストB', candidates: [shop()] });
+ assert.equal(r.status, 200, JSON.stringify(r.body));
+ assert.equal(r.body.confidence, 'low');
+ assert.ok(r.body.selfCheck.issues > 0);
+ assert.equal(r.body.selfCheck.revised, true, 'it tried once');
+ // Unresolved issues reach the organiser instead of being dropped.
+ assert.ok(r.body.confirmationChecklist.some((item) => item.startsWith('要確認:')));
+ assert.ok(r.body.confirmationChecklist.some((item) => item.includes('予約が成立したと読める')));
+});
+
+test('the constraint counts come from the candidate data, not the model', async () => {
+ await control({ mode: 'ok' });
+ const r = await agentPlan({
+  purpose: '条件テスト', people: 10, privateRoom: true,
+  candidates: [shop({ id: 'shop-1', privateRoom: true }), shop({ id: 'shop-2', privateRoom: false }), shop({ id: 'shop-3', privateRoom: false, estimatedPrice: 9000 })],
+ });
+ assert.equal(r.status, 200, JSON.stringify(r.body));
+ const room = r.body.constraints.find((c) => c.label === '個室あり');
+ assert.deepEqual([room.met, room.total], [1, 3]);
+ const budget = r.body.constraints.find((c) => c.label.includes('5,500円以内'));
+ assert.deepEqual([budget.met, budget.total], [2, 3], 'the 9000円 candidate is outside the budget');
+});
+
+test('the run record reports the depth decision and who was asked', async () => {
+ await control({ mode: 'ok' });
+ const r = await agentPlan({ purpose: '進行テスト', people: 24, dietary: true, candidates: [shop()] });
+ assert.equal(r.status, 200, JSON.stringify(r.body));
+ assert.equal(r.body.analysisDepth, 'detailed');
+ const steps = r.body.decisions.map((d) => d.step);
+ assert.ok(steps.includes('単独で比較'), JSON.stringify(steps));
+ assert.ok(steps.includes('専門担当を選ぶ'), JSON.stringify(steps));
+ // The conditions force the review even though the mock coordinator says it is unnecessary.
+ const depth = r.body.decisions.find((d) => d.step === '深さを判断');
+ assert.match(depth.detail, /条件から追加確認を必須と判定/);
+ assert.match(depth.detail, /食事上の配慮|大人数/);
 });

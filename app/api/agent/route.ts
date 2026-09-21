@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import type { AgentPlan, VenueAgentAdvice } from "@/lib/agent-types";
+import type { AgentConstraint, AgentDecision, AgentPlan, VenueAgentAdvice } from "@/lib/agent-types";
 import { database } from "@/lib/server/db";
 import { hash, HttpError, limit, log, logError, readBody, short } from "@/lib/server/security";
 
@@ -8,7 +8,7 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 /** Bump when a prompt, the model or the sampling parameters change: it keys the cache. */
-const PLAN_VERSION = "v1";
+const PLAN_VERSION = "v2";
 const CACHE_TTL_MS = 30 * 60 * 1000;
 const MEMORY_CACHE_MAX_ENTRIES = 100;
 /** Consecutive transport/5xx failures after which routed calls stop for the cooldown. */
@@ -101,18 +101,35 @@ export async function POST(request: NextRequest) {
     );
     breaker.failures = 0;
     const review = reviewDecision(coordinator.value, context);
+    const decisions: AgentDecision[] = [{ step: "単独で比較", detail: `${candidates.length}件の候補を1回の呼び出しで比較しました` }];
+
+    // 直しは1回だけ。通らない計画を往復させても費用が増えるだけです。
+    const revise = (issues: string[], current: AgentPlan) => callOrca(
+      apiKey,
+      `あなたは宴会プランの統括担当です。${sharedRules}提出した計画に不備が見つかりました。指摘された点だけを直し、同じJSON形式で返してください。JSON形式: {recommendedVenueId:string,summary:string,venueAdvice:[{venueId:string,score:number,reason:string}],confirmationChecklist:string[],nextActions:string[],shareDraft:string}。recommendedVenueIdとvenueAdviceのvenueIdは入力候補のIDだけを使う。予約が成立したとは書かない。`,
+      { context, currentPlan: { summary: current.summary, venueAdvice: current.venueAdvice, confirmationChecklist: current.confirmationChecklist, nextActions: current.nextActions, shareDraft: current.shareDraft, recommendedVenueId: current.recommendedVenueId }, issues },
+      650,
+      deadline,
+    ).catch(() => null);
+
     if (!review.detailed) {
-      const plan = normalizePlan(coordinator.value, candidates, traceId, [coordinator.resolvedModel], "standard");
+      decisions.push({ step: "深さを判断", detail: "追加確認は不要と判断し、1回で完了しました" });
+      const plan = await finalizePlan(coordinator.value, candidates, traceId, [coordinator.resolvedModel], "standard", decisions, context, revise);
       await writeCache(key, plan, traceId);
-      log("agent_plan_ok", { traceId, depth: "standard", calls: 1 });
+      log("agent_plan_ok", { traceId, depth: "standard", calls: 1, selfCheckIssues: plan.selfCheck.issues });
       return planResponse(plan);
     }
+    decisions.push({
+      step: "深さを判断",
+      detail: `${coordinator.value.needsSpecialistReview === true ? "エージェント自身が追加確認を要求" : "条件から追加確認を必須と判定"}：${review.reasons.slice(0, 3).join("、") || "判断材料が不足"}`,
+    });
 
     try {
       await limit("agent-detailed-daily", envInteger("ENCOPA_AGENT_DETAILED_DAILY_LIMIT", 30, 1, 10000), 86400);
     } catch (error) {
       if (!(error instanceof HttpError) || error.status !== 429) throw error;
-      const plan = normalizePlan(coordinator.value, candidates, traceId, [coordinator.resolvedModel], "standard");
+      decisions.push({ step: "予算の上限", detail: "本日の詳細確認の上限に達したため、標準の計画で返しました" });
+      const plan = await finalizePlan(coordinator.value, candidates, traceId, [coordinator.resolvedModel], "standard", decisions, context, revise);
       await writeCache(key, plan, traceId);
       log("agent_plan_ok", { traceId, depth: "standard", calls: 1, reason: "detailed_budget_spent" });
       return planResponse(plan);
@@ -139,8 +156,10 @@ export async function POST(request: NextRequest) {
       selectedSpecialists.map((agent) => callOrca(apiKey, `${agent.role}です。${sharedRules}${agent.task}`, context, 450, deadline)),
     );
     const completed = specialistResults.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
+    decisions.push({ step: "専門担当を選ぶ", detail: `${selectedSpecialists.map((agent) => agent.role).join("・")}に確認させました` });
     if (!completed.length) {
-      const plan = normalizePlan(coordinator.value, candidates, traceId, [coordinator.resolvedModel], "standard");
+      decisions.push({ step: "縮退", detail: "専門担当が応答しなかったため、標準の計画に戻しました" });
+      const plan = await finalizePlan(coordinator.value, candidates, traceId, [coordinator.resolvedModel], "standard", decisions, context, revise);
       await writeCache(key, plan, traceId);
       logError("agent_specialists_failed", { traceId, requested: selectedSpecialists.length });
       return planResponse(plan);
@@ -156,15 +175,17 @@ export async function POST(request: NextRequest) {
         deadline,
       );
     } catch {
-      const plan = normalizePlan(coordinator.value, candidates, traceId, [coordinator.resolvedModel, ...completed.map((result) => result.resolvedModel)], "standard");
+      decisions.push({ step: "縮退", detail: "統合に失敗したため、最初の比較結果に戻しました" });
+      const plan = await finalizePlan(coordinator.value, candidates, traceId, [coordinator.resolvedModel, ...completed.map((result) => result.resolvedModel)], "standard", decisions, context, revise);
       await writeCache(key, plan, traceId);
       logError("agent_synthesis_failed", { traceId, specialists: completed.length });
       return planResponse(plan);
     }
 
-    const plan = normalizePlan(synthesis.value, candidates, traceId, [coordinator, ...completed, synthesis].map((result) => result.resolvedModel), "detailed");
+    decisions.push({ step: "統合", detail: `${completed.length}名の結果を突き合わせ、ひとつの計画にまとめました` });
+    const plan = await finalizePlan(synthesis.value, candidates, traceId, [coordinator, ...completed, synthesis].map((result) => result.resolvedModel), "detailed", decisions, context, revise);
     await writeCache(key, plan, traceId);
-    log("agent_plan_ok", { traceId, depth: "detailed", calls: 2 + completed.length });
+    log("agent_plan_ok", { traceId, depth: "detailed", calls: 2 + completed.length, selfCheckIssues: plan.selfCheck.issues });
     return planResponse(plan);
   } catch (error) {
     if (error instanceof HttpError) return NextResponse.json({ available: false, traceId, error: error.message }, { status: error.status, headers: { "Cache-Control": "no-store" } });
@@ -269,7 +290,7 @@ function parseJsonObject(content: string): Record<string, unknown> | null {
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-function normalizePlan(value: Record<string, unknown>, candidates: Candidate[], traceId: string, models: string[], analysisDepth: AgentPlan["analysisDepth"]): AgentPlan {
+function normalizePlan(value: Record<string, unknown>, candidates: Candidate[], traceId: string, models: string[], analysisDepth: AgentPlan["analysisDepth"], extras?: { decisions?: AgentDecision[]; constraints?: AgentConstraint[]; selfCheck?: AgentPlan["selfCheck"]; confidence?: AgentPlan["confidence"]; extraChecklist?: string[] }): AgentPlan {
   const ids = new Set(candidates.map((candidate) => candidate.id));
   const rawAdvice = Array.isArray(value.venueAdvice) ? value.venueAdvice : [];
   const venueAdvice: VenueAgentAdvice[] = rawAdvice.flatMap((item) => {
@@ -288,11 +309,95 @@ function normalizePlan(value: Record<string, unknown>, candidates: Candidate[], 
     recommendedVenueId,
     summary: clean(value.summary, 600) || "条件と店舗情報を比較し、予約前の確認事項を整理しました。",
     venueAdvice,
-    confirmationChecklist: stringList(value.confirmationChecklist, 6, 160),
+    confirmationChecklist: [...stringList(value.confirmationChecklist, 6, 160), ...(extras?.extraChecklist ?? [])].slice(0, 9),
     nextActions: stringList(value.nextActions, 5, 160),
     shareDraft: clean(value.shareDraft, 800),
     resolvedModels: [...new Set(models.filter(Boolean))].slice(0, 4),
+    decisions: (extras?.decisions ?? []).slice(0, 8),
+    constraints: extras?.constraints ?? [],
+    selfCheck: extras?.selfCheck ?? { issues: 0, revised: false },
+    confidence: extras?.confidence ?? "high",
   };
+}
+
+/**
+ * 自己検証。モデルにもう一度尋ねるのではなく、候補データと突き合わせて機械的に見ます。
+ * 検証をモデルに任せれば、同じ思い込みをもう一度返すだけになります。
+ */
+/**
+ * 仕上げ。検証して、必要なら1度だけ直させ、それでも残った不備は隠さず確認事項に出します。
+ *
+ * 直しを1回に限るのは、通らない計画を何度も往復させると費用だけが増えるからです。
+ * 2回目で通らなければ、それは直せない不備なので、幹事に見せるほうが安全です。
+ */
+async function finalizePlan(
+  raw: Record<string, unknown>,
+  candidates: Candidate[],
+  traceId: string,
+  models: string[],
+  depth: AgentPlan["analysisDepth"],
+  decisions: AgentDecision[],
+  context: { people: number; budget: number; privateRoom: boolean; dietary: boolean },
+  revise?: (issues: string[], current: AgentPlan) => Promise<OrcaResult | null>,
+): Promise<AgentPlan> {
+  const constraints = constraintReport(candidates, context);
+  let plan = normalizePlan(raw, candidates, traceId, models, depth, { decisions, constraints });
+  let issues = verifyPlan(plan, candidates, context);
+  let revised = false;
+
+  if (issues.length && revise) {
+    const retry = await revise(issues, plan);
+    if (retry) {
+      revised = true;
+      models = [...models, retry.resolvedModel];
+      const candidatePlan = normalizePlan(retry.value, candidates, traceId, models, depth, { decisions, constraints });
+      const remaining = verifyPlan(candidatePlan, candidates, context);
+      // 直したことで悪化したなら、直す前を採ります。
+      if (remaining.length <= issues.length) { plan = candidatePlan; issues = remaining; }
+    }
+  }
+
+  const confidence: AgentPlan["confidence"] = issues.length ? "low" : "high";
+  const finalDecisions = [...decisions, issues.length
+    ? { step: "自己検証", detail: revised ? `${issues.length}件の不備が残ったため、確信度を下げて確認事項に出しました` : `${issues.length}件の不備を確認事項に出しました` }
+    : { step: "自己検証", detail: revised ? "不備を見つけ、1回の修正で解消しました" : "候補データと突き合わせ、不備なしを確認しました" }];
+
+  log("agent_self_check", { traceId, issues: issues.length, revised, confidence });
+  return normalizePlan(plan as unknown as Record<string, unknown>, candidates, traceId, models, depth, {
+    decisions: finalDecisions,
+    constraints,
+    selfCheck: { issues: issues.length, revised },
+    confidence,
+    // 直せなかったことを黙って落とさず、幹事の確認事項として出します。
+    extraChecklist: issues.map((issue) => `要確認: ${issue}`),
+  });
+}
+
+function verifyPlan(plan: AgentPlan, candidates: Candidate[], context: { people: number; privateRoom: boolean; dietary: boolean }): string[] {
+  const issues: string[] = [];
+  const chosen = candidates.find((candidate) => candidate.id === plan.recommendedVenueId);
+  const text = [plan.summary, plan.shareDraft, ...plan.confirmationChecklist, ...plan.nextActions].join("\n");
+  const mentions = (...words: string[]) => words.some((word) => text.includes(word));
+
+  if (!plan.venueAdvice.some((advice) => advice.venueId === plan.recommendedVenueId)) issues.push("推薦した店舗の評価理由がありません");
+  if (!plan.confirmationChecklist.length) issues.push("予約前に確認することが空です");
+  // 予約は行わないため、成立したと読める文面は必ず誤りです。
+  if (/予約(?:しました|済み|完了|が取れ|を取りました)|確保(?:しました|済み)|押さえました/.test(text)) issues.push("予約が成立したと読める記述があります");
+  if (context.privateRoom && chosen && !chosen.privateRoom && !mentions("個室")) issues.push("個室条件を満たさない候補を推薦していますが、確認事項に個室の記載がありません");
+  if (chosen && chosen.partyCapacity !== null && chosen.partyCapacity < context.people && !mentions("人数", "名")) issues.push("人数条件を満たさない候補を推薦していますが、確認事項に人数の記載がありません");
+  if (context.dietary && !mentions("アレルギー", "食事")) issues.push("食事上の配慮が必要ですが、確認事項に記載がありません");
+  return issues;
+}
+
+/** 条件ごとの充足状況。数はすべてここで数え、モデルには数えさせません。 */
+function constraintReport(candidates: Candidate[], context: { people: number; budget: number; privateRoom: boolean }): AgentConstraint[] {
+  const total = candidates.length;
+  const rows: AgentConstraint[] = [
+    { label: `${context.people}名の宴会に対応`, met: candidates.filter((c) => c.partyCapacity === null || c.partyCapacity >= context.people).length, total, relaxable: false },
+    { label: `1人 ${context.budget.toLocaleString()}円以内`, met: candidates.filter((c) => c.estimatedPrice === null || c.estimatedPrice <= context.budget).length, total, relaxable: true },
+  ];
+  if (context.privateRoom) rows.unshift({ label: "個室あり", met: candidates.filter((c) => c.privateRoom).length, total, relaxable: true });
+  return rows;
 }
 
 function reviewDecision(value: Record<string, unknown>, context: { people: number; privateRoom: boolean; dietary: boolean; candidates: Candidate[] }): ReviewDecision {
