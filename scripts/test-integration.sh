@@ -51,7 +51,10 @@ for _ in $(seq 1 80); do
   if curl --silent --fail --output /dev/null "$test_base"; then
     # Serialized: the local SQLite file cannot take concurrent writers, and parallel test
     # files would make the routes degrade to their fallbacks on lock contention.
-    node --test --test-concurrency=1 tests/*.test.mjs
+    # --experimental-strip-types lets a test import the app's own TypeScript modules
+    # instead of a copy of them. Node 24 (.nvmrc) strips types without it; the flag is
+    # still accepted there, so one command covers both versions.
+    node --experimental-strip-types --test --test-concurrency=1 tests/*.test.mjs
     exit 0
   fi
   if ! kill -0 "$server_pid" 2>/dev/null; then

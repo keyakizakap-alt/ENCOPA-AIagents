@@ -29,7 +29,7 @@ type Priority = "balance" | "conversation" | "cost" | "access";
 type Query = { purpose:string; area:string; prefectureCode:string; budget:number; people:number; priority:Priority; privateRoom:boolean; dietary:boolean };
 type Stage = "draft" | "ranked" | "collecting" | "awaiting_approval" | "scheduled";
 const STAGES: readonly string[] = ["draft","ranked","collecting","awaiting_approval","scheduled"];
-type AuditEvent = { id:string; label:string; detail:string };
+type AuditEvent = { id:string; label:string; detail:string; at:number };
 
 const steps = [["条件","完了"],["候補比較","いまここ"],["みんなに確認","次"],["幹事が承認",""],["予約・予定確保",""]];
 const priorityLabels: Record<Priority,string> = { balance:"バランス", conversation:"会話しやすさ", cost:"予算", access:"移動しやすさ" };
@@ -62,6 +62,7 @@ export default function Home() {
   const [providerTotal,setProviderTotal]=useState(0);
   const [fetchedAt,setFetchedAt]=useState(0);
   const [selected,setSelected]=useState(0);
+  const [picked,setPicked]=useState(false);
   const [approvalOpen,setApprovalOpen]=useState(false);
   const [settingsOpen,setSettingsOpen]=useState(false);
   const [allergyOpen,setAllergyOpen]=useState(false);
@@ -70,7 +71,7 @@ export default function Home() {
   const [completed,setCompleted]=useState(false);
   const [failover,setFailover]=useState(false);
   const [stage,setStage]=useState<Stage>("draft");
-  const [audit,setAudit]=useState<AuditEvent[]>([{id:"init",label:"会を作成",detail:"外部操作はまだ行っていません"}]);
+  const [audit,setAudit]=useState<AuditEvent[]>([{id:"init",label:"会を作成",detail:"外部操作はまだ行っていません",at:0}]);
   const [restored,setRestored]=useState(false);
   const [section,setSection]=useState<ShellSection>("home");
 
@@ -80,7 +81,7 @@ export default function Home() {
   const chosen=candidates[Math.min(selected,candidates.length-1)] ?? candidates[0];
   const stageIndex={draft:0,ranked:1,collecting:2,awaiting_approval:3,scheduled:4}[stage];
   const progress=[15,40,62,82,100][stageIndex];
-  const addAudit=(label:string,detail:string)=>setAudit(current=>[{id:crypto.randomUUID(),label,detail},...current].slice(0,6));
+  const addAudit=(label:string,detail:string)=>setAudit(current=>[{id:crypto.randomUUID(),label,detail,at:Date.now()},...current].slice(0,8));
 
   const search = async (override?:Partial<Query>) => {
     const next:Query={
@@ -119,7 +120,7 @@ export default function Home() {
     } catch (error) {
       setVenues([]);setProviderTotal(0);setSearchError(error instanceof Error?error.message:"店舗を検索できませんでした。");
     } finally {
-      setSearching(false); setSearched(true); setStage("ranked");
+      setSearching(false); setSearched(true); setStage("ranked"); setPicked(false);
       setTimeout(()=>document.getElementById("results")?.scrollIntoView({behavior:"smooth",block:"start"}),60);
     }
   };
@@ -190,7 +191,7 @@ export default function Home() {
         // break the stepper and progress bar, and an invalid date reached the calendar
         // writer, where toISOString() throws.
         if(STAGES.includes(value.stage)){setStage(value.stage);setCompleted(value.stage==="collecting"||value.stage==="awaiting_approval"||value.stage==="scheduled")}
-        const restoredAudit=Array.isArray(value.audit)?value.audit.filter((e:unknown)=>!!e&&typeof e==="object"&&["id","label","detail"].every(k=>typeof (e as Record<string,unknown>)[k]==="string")).slice(0,6):[];
+        const restoredAudit=Array.isArray(value.audit)?value.audit.filter((e:unknown)=>!!e&&typeof e==="object"&&["id","label","detail"].every(k=>typeof (e as Record<string,unknown>)[k]==="string")).map((e:Record<string,unknown>)=>({...e,at:Number.isFinite(e.at)?Number(e.at):0})).slice(0,8):[];
         if(restoredAudit.length)setAudit(restoredAudit as AuditEvent[]);
         if(isCalendarDate(value.eventDate))setEventDate(value.eventDate);
         if(typeof value.eventTime==="string"&&/^([01]\d|2[0-3]):[0-5]\d$/.test(value.eventTime))setEventTime(value.eventTime);
@@ -304,7 +305,7 @@ export default function Home() {
                     explicit pair of actions, and a button cannot be nested inside a button. */}
                 <div className="mt-4 grid grid-cols-2 gap-2 border-t border-[#211f1d]/8 pt-4">
                   <a href={v.url} target="_blank" rel="noopener noreferrer" className="inline-flex h-10 items-center justify-center whitespace-nowrap rounded-xl border border-[#211f1d]/15 bg-white px-3 text-sm font-semibold text-[#211f1d] transition hover:bg-[#fdf6ef]">詳細を見る</a>
-                  <button type="button" onClick={()=>{setSelected(i);setCompleted(false);setStage("ranked")}} aria-pressed={selected===i} className={`inline-flex h-10 items-center justify-center whitespace-nowrap rounded-xl px-3 text-sm font-semibold transition ${selected===i?"bg-[#fdeae5] text-[#c03429]":"bg-[#d03e28] text-white hover:bg-[#b03320]"}`}>{selected===i?"選択中":"このお店で進める"}</button>
+                  <button type="button" onClick={()=>{setSelected(i);setPicked(true);setCompleted(false);setStage("ranked")}} aria-pressed={selected===i} className={`inline-flex h-10 items-center justify-center whitespace-nowrap rounded-xl px-3 text-sm font-semibold transition ${selected===i?"bg-[#fdeae5] text-[#c03429]":"bg-[#d03e28] text-white hover:bg-[#b03320]"}`}>{selected===i?"選択中":"このお店で進める"}</button>
                 </div></div>
             </article>)}
           </div>}
@@ -313,7 +314,7 @@ export default function Home() {
           {candidates.length>0&&<NextSteps
             canSwap={candidates.length>1}
             onRefine={()=>{document.getElementById("conditions")?.scrollIntoView({behavior:"smooth",block:"center"})}}
-            onSwap={()=>{setFailover(true);setSelected(0);setStage("ranked");addAudit("次の候補へ変更","現在の条件を保ったまま候補を切り替えました")}}
+            onSwap={()=>{setFailover(true);setSelected(0);setPicked(true);setStage("ranked");addAudit("次の候補へ変更","現在の条件を保ったまま候補を切り替えました")}}
             onAsk={()=>goTo("agent")}
           />}
           {chosen&&<><div className="mt-5 grid gap-5 rounded-[24px] border border-[#211f1d]/10 bg-white p-5 shadow-sm sm:p-6 lg:grid-cols-[.9fr_1.1fr]"><div><p className="text-xs font-semibold tracking-[.1em] text-[#c03429]">店舗の場所</p><h3 className="mt-1 text-xl font-semibold">{chosen.name}</h3><div className="mt-4 grid gap-4 sm:grid-cols-2"><div className="rounded-2xl bg-[#fdf6ef] p-4"><p className="text-xs font-semibold text-[#6b635c]">住所</p><p className="mt-1 text-sm leading-6 text-[#3a342f]">{chosen.address}</p><p className="mt-3 text-xs font-semibold text-[#6b635c]">アクセス</p><p className="mt-1 text-sm leading-6 text-[#3a342f]">{chosen.access}</p></div><div className="flex flex-col justify-center gap-2 rounded-2xl border border-[#211f1d]/10 p-4"><p className="text-xs font-semibold text-[#6b635c]">地図で開く</p><MapLinks address={chosen.address}/></div></div><a href={chosen.url} target="_blank" rel="noopener noreferrer" className="mt-4 inline-flex min-h-11 items-center gap-2 text-sm font-semibold text-[#d03e28] underline-offset-4 hover:underline">店舗ページで詳細・空席を確認<ExternalLink className="size-4"/></a></div><VenueMap address={chosen.address} label={chosen.name}/></div>
@@ -328,10 +329,20 @@ export default function Home() {
           <div className="mt-4 rounded-2xl bg-white/[.08] p-4"><p className="text-xs text-white/55">選択中のプラン</p><p className="mt-1 text-lg font-semibold">{chosen?.name||"店舗を検索してください"}</p><div className="mt-4 space-y-2 text-sm"><div className="flex justify-between gap-4"><span className="text-white/55">日時</span><span className="text-right">{eventDate.slice(5).replace("-","/")} {eventTime}</span></div><div className="flex justify-between gap-4"><span className="text-white/55">人数</span><span>{query.people}名</span></div><div className="flex justify-between gap-4"><span className="text-white/55">予算</span><span className="max-w-[180px] truncate text-right">{chosen?.budgetLabel||`${query.budget.toLocaleString()}円 / 人`}</span></div><div className="flex justify-between gap-4"><span className="text-white/55">場所</span><span className="max-w-[180px] truncate text-right">{chosen?.address||query.area}</span></div></div></div>
           <div className="mt-4 grid grid-cols-2 gap-2"><Button disabled={!chosen} onClick={()=>void sharePlan()} className="rounded-xl bg-[#ef8354] text-white hover:bg-[#f2966a]"><Share2 className="mr-2 size-4"/>共有する</Button><Button disabled={!chosen} onClick={()=>void copyPlan()} variant="outline" className="rounded-xl border-white/15 bg-white/[.06] text-white hover:bg-white/15 hover:text-white"><Copy className="mr-2 size-4"/>コピー</Button></div>
           {shareStatus&&<p role="status" className="mt-3 text-xs leading-5 text-white/70">{shareStatus}</p>}
-          <Button disabled={candidates.length<2} onClick={()=>{setFailover(true);setSelected(0);setStage("ranked");addAudit("次の候補へ変更","現在の条件を保ったまま候補を切り替えました")}} variant="ghost" className="mt-3 w-full rounded-xl text-white/75 hover:bg-white/10 hover:text-white"><RefreshCw className="mr-2 size-4"/>満席なら次の候補へ</Button>
+          <Button disabled={candidates.length<2} onClick={()=>{setFailover(true);setSelected(0);setPicked(true);setStage("ranked");addAudit("次の候補へ変更","現在の条件を保ったまま候補を切り替えました")}} variant="ghost" className="mt-3 w-full rounded-xl text-white/75 hover:bg-white/10 hover:text-white"><RefreshCw className="mr-2 size-4"/>満席なら次の候補へ</Button>
         </div>
         <div id="agent-panel" className="scroll-mt-24 rounded-[24px] border border-[#211f1d]/10 bg-white p-5 shadow-[0_16px_40px_rgba(30,41,40,.07)]"><div className="flex items-center justify-between"><div><p className="text-xs font-semibold tracking-[.09em] text-[#c03429]">進行状況</p><h2 className="mt-1 text-xl font-semibold">この会の準備</h2></div><span className="text-2xl font-semibold text-[#d03e28]">{progress}%</span></div><Progress value={progress} className="mt-4 h-2 bg-[#f6ece1] [&>div]:bg-[#ef8354]"/><div className="mt-6 space-y-1"><StatusRow icon={WalletCards} title="目的・予算" detail={`${query.purpose}・${query.budget.toLocaleString()}円`} done/><StatusRow icon={MapPin} title="会場候補" detail={candidates.length?`${query.area}・${candidates.length}件`:"店舗を検索してください"} done={stageIndex>1&&candidates.length>0} active={stageIndex===1}/><StatusRow icon={Users} title="参加者確認" detail={stageIndex<2?"リンク未送信":stageIndex===2?"回答を収集中":"回答完了"} done={stageIndex>2} active={stageIndex===2}/><StatusRow icon={CalendarDays} title="予約と予定" detail={stage==="scheduled"?"カレンダーへ追加済み":"内容を確認して確定"} done={stage==="scheduled"} active={stage==="awaiting_approval"}/></div><div className="mt-6 rounded-2xl bg-[#f6ece1] p-4"><div className="flex items-center gap-2 text-sm font-semibold"><ShieldCheck className="size-4 text-[#2f7d55]"/>プライバシー</div><p className="mt-2 text-xs leading-5 text-[#6b635c]">アレルギーの詳細は本人と幹事だけが確認できます。参加者全員には表示されません。</p></div></div>
-        <div className="mt-4 rounded-[24px] border border-[#211f1d]/10 bg-white p-5"><div className="flex items-center justify-between"><div><p className="text-xs font-semibold tracking-[.09em] text-[#c03429]">最近の更新</p><h2 className="mt-1 text-lg font-semibold">プランの履歴</h2></div><Badge variant="outline" className="bg-[#fdf6ef]">この端末</Badge></div><div className="mt-4 space-y-3">{audit.slice(0,4).map((item,index)=><div key={item.id} className="flex gap-3"><span className={`mt-1.5 size-2 shrink-0 rounded-full ${index===0?"bg-[#ef8354]":"bg-[#cbbfb2]"}`}/><div><p className="text-sm font-semibold">{item.label}</p><p className="mt-0.5 text-xs leading-5 text-[#6b635c]">{item.detail}</p></div></div>)}</div></div>
+        <TodoList
+          stage={stage}
+          hasVenue={picked}
+          searched={searched}
+          analysed={agentStatus==="ready"}
+          onSearch={()=>{document.getElementById("conditions")?.scrollIntoView({behavior:"smooth",block:"center"})}}
+          onPick={()=>goTo("venues")}
+          onShare={()=>goTo("participants")}
+          onApprove={()=>setApprovalOpen(true)}
+        />
+        <Timeline events={audit}/>
       </aside>
     </section>
 
@@ -371,6 +382,51 @@ function NextSteps({canSwap,onRefine,onSwap,onAsk}:{canSwap:boolean;onRefine:()=
         </button>
       </li>)}
     </ul>
+  </section>;
+}
+/**
+ * 進行タイムライン。何が起きたかではなく「いつ・何をしたか」を並べます。時刻は端末の
+ * ローカル時刻で、この端末に保存された分だけを出します（サーバーには送っていません）。
+ */
+function Timeline({events}:{events:{id:string;label:string;detail:string;at:number}[]}){
+  return <section aria-label="AIエージェントの進行" className="mt-4 rounded-[24px] border border-[#211f1d]/10 bg-white p-5">
+    <div className="flex items-center justify-between"><div><p className="text-xs font-semibold tracking-[.09em] text-[#c03429]">最近の更新</p><h2 className="mt-1 text-lg font-semibold">AIエージェントの進行</h2></div><Badge variant="outline" className="bg-[#fdf6ef]">この端末</Badge></div>
+    <ol className="mt-4">{events.slice(0,5).map((item,index)=><li key={item.id} className="relative flex gap-3 pb-4 last:pb-0">
+      {index<Math.min(events.length,5)-1&&<span aria-hidden className="absolute left-[3px] top-4 h-full w-px bg-[#ecdfd1]"/>}
+      <span className={`relative mt-1.5 size-[7px] shrink-0 rounded-full ${index===0?"bg-[#ef8354]":"bg-[#cbbfb2]"}`}/>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-baseline justify-between gap-2"><p className="text-sm font-semibold">{item.label}</p>{item.at>0&&<time dateTime={new Date(item.at).toISOString()} className="shrink-0 text-[11px] tabular-nums text-[#6b635c]">{new Date(item.at).toLocaleTimeString("ja-JP",{hour:"2-digit",minute:"2-digit"})}</time>}</div>
+        <p className="jp-text mt-0.5 text-xs leading-5 text-[#6b635c]">{item.detail}</p>
+      </div>
+    </li>)}</ol>
+  </section>;
+}
+
+/**
+ * やることリスト。状態から導いた結果だけを出すので、済んだことと残っていることが食い違い
+ * ません。完了の判定は実際に起きたこと（候補を取得した、店を選んだ、予定を書き出した）に
+ * だけ紐づけています。
+ */
+function TodoList({stage,hasVenue,searched,analysed,onSearch,onPick,onShare,onApprove}:{stage:Stage;hasVenue:boolean;searched:boolean;analysed:boolean;onSearch:()=>void;onPick:()=>void;onShare:()=>void;onApprove:()=>void}){
+  const items=[
+    {label:"条件を決めて候補を出す",done:searched,action:onSearch,hint:"目的・予算・人数・場所"},
+    {label:"お店を選ぶ",done:hasVenue,action:onPick,hint:analysed?"AIの比較コメントつき":"候補から1件選びます"},
+    {label:"参加者に共有して出欠を集める",done:stage==="collecting"||stage==="awaiting_approval"||stage==="scheduled",action:onShare,hint:"グループを作って招待します"},
+    {label:"予定を確定してカレンダーへ",done:stage==="scheduled",action:onApprove,hint:"内容を確認してから書き出します"},
+  ];
+  const remaining=items.filter(item=>!item.done).length;
+  return <section aria-label="やることリスト" className="mt-4 rounded-[24px] border border-[#211f1d]/10 bg-white p-5">
+    <div className="flex items-center justify-between"><div><p className="text-xs font-semibold tracking-[.09em] text-[#c03429]">TO DO</p><h2 className="mt-1 text-lg font-semibold">やることリスト</h2></div><span className="text-sm font-semibold text-[#6b635c]">{remaining===0?"完了":`残り${remaining}件`}</span></div>
+    <ul className="mt-4 space-y-2">{items.map(({label,done,action,hint})=><li key={label}>
+      <button type="button" onClick={action} className={`flex w-full items-center gap-3 rounded-xl border p-3 text-left transition ${done?"border-transparent bg-[#f6ece1]":"border-[#211f1d]/10 bg-white hover:border-[#d03e28]/40 hover:bg-[#fdf6ef]"}`}>
+        <span className={`grid size-6 shrink-0 place-items-center rounded-full ${done?"bg-[#2f7d55] text-white":"border border-[#cbbfb2] bg-white"}`}>{done&&<Check className="size-3.5"/>}</span>
+        <span className="min-w-0 flex-1">
+          <span className={`jp-text block text-sm font-semibold ${done?"text-[#6b635c] line-through decoration-[#cbbfb2]":""}`}>{label}</span>
+          <span className="jp-text block text-xs leading-5 text-[#6b635c]">{hint}</span>
+        </span>
+        {!done&&<ChevronRight className="size-4 shrink-0 text-[#6b635c]"/>}
+      </button>
+    </li>)}</ul>
   </section>;
 }
 function MiniStat({label,value}:{label:string;value:string}){return <div className="min-w-0"><p className="text-[11px] text-[#6b635c]">{label}</p><p className="mt-1 whitespace-nowrap text-[13px] font-semibold sm:text-sm">{value}</p></div>}
