@@ -137,7 +137,7 @@ cp .env.example .env.local
 pnpm dev
 ```
 
-ローカルでは`TURSO_DATABASE_URL`が空の場合、`data/encopa.db`を自動作成します。`.env.local`へ`ENCOPA_CREATE_KEY`、`ENCOPA_DATA_KEY`、[ホットペッパーグルメWebサービス](https://webservice.recruit.co.jp/doc/hotpepper/reference.html)の`HOTPEPPER_API_KEY`、[OrcaRouter](https://docs.orcarouter.ai/introduction)の`ORCAROUTER_API_KEY`を設定してください。暗号化キーは`openssl rand -hex 32`で生成できます。
+ローカルでは`TURSO_DATABASE_URL`が空の場合、`data/encopa.db`を自動作成します。`.env.local`へ`ENCOPA_DATA_KEY`、[ホットペッパーグルメWebサービス](https://webservice.recruit.co.jp/doc/hotpepper/reference.html)の`HOTPEPPER_API_KEY`、[OrcaRouter](https://docs.orcarouter.ai/introduction)の`ORCAROUTER_API_KEY`を設定してください。暗号化キーは`openssl rand -hex 32`で生成できます。
 
 ## Vercelへデプロイ
 
@@ -150,7 +150,6 @@ pnpm dev
 |---|---:|---|
 | `TURSO_DATABASE_URL` | 本番必須 | 共有データベースURL |
 | `TURSO_AUTH_TOKEN` | 本番必須 | Tursoのサーバー専用トークン |
-| `ENCOPA_CREATE_KEY` | 本番必須 | 幹事がグループを作るためのコード |
 | `ENCOPA_DATA_KEY` | 本番必須 | 予約内容とアレルギー情報をAES-256-GCMで暗号化する32バイト鍵 |
 | `APP_ORIGIN` | 本番必須 | `https://example.com`形式の公開Origin |
 | `HOTPEPPER_API_KEY` | 本番必須 | 実店舗検索。ブラウザへ公開しないサーバー専用キー |
@@ -234,6 +233,8 @@ pnpm audit --prod
 - 予約内容とアレルギー情報はAES-256-GCMで暗号化して保存します。既存の平文レコードは読み取り互換を維持し、更新時から暗号化されます。
 - CookieはHttpOnly、SameSite Strict、本番ではSecureです。
 - POSTは同一Origin、JSON、16KiB以下に制限します。
+- グループ作成は送信元ごとに1時間10回、全体で1時間300回へ制限します。
+- 予約番号は既定で幹事だけに返し、幹事が明示的に許可した場合だけ参加者と予約共有メッセージに表示します。
 - グループは90日、参加セッションは30日、招待リンクは7日で期限切れになります。
 - チャットは最新100件を表示します。
 - 店舗検索は送信元ごとに1時間30回へ制限し、外部APIは8秒でタイムアウトします。

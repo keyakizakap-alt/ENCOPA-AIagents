@@ -29,11 +29,9 @@ trap cleanup EXIT
 
 export TURSO_DATABASE_URL="file:${test_dir}/test.db"
 export TURSO_AUTH_TOKEN=""
-export ENCOPA_CREATE_KEY="local-integration-test-only"
 export ENCOPA_DATA_KEY="000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
 export APP_ORIGIN="$test_base"
 export TEST_BASE_URL="$test_base"
-export TEST_CREATE_KEY="$ENCOPA_CREATE_KEY"
 export HOTPEPPER_API_KEY="test-hotpepper-key"
 export HOTPEPPER_BASE_URL="http://127.0.0.1:3012/gourmet/v1/"
 export HOTPEPPER_ALLOW_INSECURE_LOCALHOST="true"
