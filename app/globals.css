@@ -2,6 +2,11 @@
 @import "tw-animate-css";
 @import "../vendor/shadcn-tailwind-4.13.0.css";
 @utility scrollbar-none { scrollbar-width:none; &::-webkit-scrollbar{display:none;} }
+/* Japanese has no spaces, so a line may end between any two characters. line-break:strict
+   keeps small kana and punctuation off a line start, and auto-phrase - where the browser
+   supports it - breaks at phrase boundaries instead of mid-word. */
+@utility jp-text { line-break:strict; overflow-wrap:normal; text-wrap:pretty; }
+@supports (word-break:auto-phrase){ .jp-text{ word-break:auto-phrase } }
 :root{--background:#f7f5ef;--foreground:#1e2928;--card:#fff;--card-foreground:#1e2928;--popover:#fff;--popover-foreground:#1e2928;--primary:#1f4b46;--primary-foreground:#fffaf1;--secondary:#eeeae0;--secondary-foreground:#1e2928;--muted:#eeeae0;--muted-foreground:#687370;--accent:#e8eee9;--accent-foreground:#1f4b46;--destructive:#b43a32;--border:#dcdad2;--input:#d4d4cd;--ring:#507e77;--radius:.8rem;}
 @theme inline{--color-background:var(--background);--color-foreground:var(--foreground);--color-card:var(--card);--color-card-foreground:var(--card-foreground);--color-popover:var(--popover);--color-popover-foreground:var(--popover-foreground);--color-primary:var(--primary);--color-primary-foreground:var(--primary-foreground);--color-secondary:var(--secondary);--color-secondary-foreground:var(--secondary-foreground);--color-muted:var(--muted);--color-muted-foreground:var(--muted-foreground);--color-accent:var(--accent);--color-accent-foreground:var(--accent-foreground);--color-destructive:var(--destructive);--color-border:var(--border);--color-input:var(--input);--color-ring:var(--ring);--radius-sm:calc(var(--radius) - 4px);--radius-md:calc(var(--radius) - 2px);--radius-lg:var(--radius);--radius-xl:calc(var(--radius) + 4px);--font-sans:"Hiragino Sans","Yu Gothic UI","Yu Gothic",system-ui,sans-serif;}
 *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--background);color:var(--foreground);font-family:var(--font-sans)}.font-serif{font-family:"Yu Mincho","Hiragino Mincho ProN",Georgia,serif}button,input{font:inherit}button:focus-visible,input:focus-visible{outline:3px solid rgba(80,126,119,.35);outline-offset:2px}
