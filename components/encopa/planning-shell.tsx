@@ -48,7 +48,7 @@ export function DesktopNavigation({
   return (
     <nav
       aria-label="プラン内ナビゲーション"
-      className="hidden self-start rounded-[24px] bg-[#171d1c] p-3 text-white shadow-[0_18px_48px_rgba(20,28,27,.16)] xl:sticky xl:top-24 xl:block"
+      className="hidden self-start rounded-[24px] bg-[#171d1c] p-3 text-white shadow-[0_18px_48px_rgba(20,28,27,.16)] 2xl:sticky 2xl:top-24 2xl:block"
     >
       <a
         href="#home"
@@ -91,7 +91,7 @@ export function MobileNavigation({ stage }: { stage: Stage }) {
   return (
     <nav
       aria-label="モバイルナビゲーション"
-      className="fixed inset-x-3 bottom-3 z-50 rounded-[22px] border border-black/10 bg-white/92 p-1.5 shadow-[0_18px_50px_rgba(21,29,28,.2)] backdrop-blur-xl xl:hidden"
+      className="fixed inset-x-3 bottom-3 z-50 rounded-[22px] border border-black/10 bg-white/92 p-1.5 shadow-[0_18px_50px_rgba(21,29,28,.2)] backdrop-blur-xl 2xl:hidden"
     >
       <div className="grid grid-cols-5">
         {navItems.map(({ key, href, label, icon: Icon }) => {
@@ -144,8 +144,8 @@ export function PlanOverview({
     >
       <div aria-hidden className="absolute -right-16 -top-20 size-52 rounded-full bg-[#f7d8c8]/45" />
       <div aria-hidden className="absolute -right-4 top-8 size-24 rounded-full bg-[#efb34b]/15" />
-      <div className="relative flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
-        <div className="min-w-0">
+      <div className="relative flex flex-col gap-5 2xl:flex-row 2xl:items-center 2xl:justify-between">
+        <div className="w-full min-w-0 2xl:flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-[11px] font-bold tracking-[.14em] text-[#b94a36]">CURRENT PLAN</p>
             <span className="inline-flex items-center gap-1.5 rounded-full bg-[#e8f0ea] px-2.5 py-1 text-[11px] font-semibold text-[#2c644e]">
@@ -153,12 +153,12 @@ export function PlanOverview({
               {status.label}
             </span>
           </div>
-          <h1 id="plan-overview-title" className="mt-2 font-serif text-2xl font-semibold tracking-tight text-[#1e2928] sm:text-3xl">
+          <h1 id="plan-overview-title" className="mt-2 break-keep font-serif text-2xl font-semibold tracking-tight text-[#1e2928] sm:text-3xl">
             {title}
           </h1>
           <p className="mt-2 max-w-xl text-sm leading-6 text-[#687370]">{status.description}</p>
         </div>
-        <dl className="grid grid-cols-2 gap-x-5 gap-y-3 text-sm sm:grid-cols-3 lg:min-w-[520px]">
+        <dl className="grid w-full grid-cols-2 gap-x-5 gap-y-3 text-sm sm:grid-cols-3 2xl:w-auto 2xl:min-w-[520px]">
           <Fact icon={CalendarDays} label="開催" value={`${dateLabel} ${eventTime}`} />
           <Fact icon={Users} label="人数" value={`${people}名`} />
           <Fact icon={WalletCards} label="予算 / 人" value={`${budget.toLocaleString()}円`} />
