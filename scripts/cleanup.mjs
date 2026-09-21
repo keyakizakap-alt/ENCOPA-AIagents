@@ -7,5 +7,6 @@ await db.batch([
  {sql:'DELETE FROM encopa_members WHERE group_id IN (SELECT id FROM encopa_groups WHERE expires_at<=?)',args:[now]},
  {sql:'DELETE FROM encopa_groups WHERE expires_at<=?',args:[now]},
  {sql:'DELETE FROM encopa_limits WHERE expires_at<=?',args:[now]},
+ {sql:'DELETE FROM encopa_ai_cache WHERE expires_at<=?',args:[now]},
 ],'write');
-db.close();console.log('Expired group data and rate-limit records removed.');
+db.close();console.log('Expired group data, rate-limit records and cached model output removed.');

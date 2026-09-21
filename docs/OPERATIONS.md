@@ -22,17 +22,31 @@
 | `agent_call_ok` | 外部モデル呼び出し成功。`dailyUsed` / `dailyLimit` で日次消費を確認できます |
 | `agent_call_failed` | 再試行後も失敗。`reason`（`orca_http_429` / `timeout` / `transport_error` など）と`consecutiveFailures`を確認 |
 | `agent_fallback` | ローカル評価へ切り替え。`reason`が`circuit_open`ならブレーカ作動中、`daily_limit`なら上限到達 |
-| `agent_cache_hit` | キャッシュ応答。外部呼び出しなし |
+| `agent_cache_hit` | キャッシュ応答。外部呼び出しなし。`tier`が`memory`ならプロセス内、`shared`なら`encopa_ai_cache`由来 |
+| `agent_cache_read_failed` / `agent_cache_write_failed` | キャッシュ処理の失敗。リクエストは継続します（外部モデル呼び出しへ縮退） |
+| `agent_prompt_cache_rejected` | ゲートウェイがプロンプトキャッシュ指定を拒否。指定なしで再試行しています |
 | `request_failed` | 共有機能の想定外エラー。例外クラス名のみ記録します |
 
 利用者から申告されたエラーIDは、レスポンスの`traceId`および画面の「エラーID」と一致します。ログを`traceId`で検索してください。
 
 `agent_call_failed`が連続3回に達すると60秒間、外部モデルの呼び出し自体を停止します（プロセス内メモリで保持するため、インスタンスごとに独立して動作します）。
 
+`agent_cache_read_failed`や`agent_call_failed`の`reason`が`daily_limit`で急増した場合は、データベース側の障害を疑ってください。DBが応答しないと、日次上限の計上に失敗して安全側（ローカル評価）へ倒れます。
+
+## キャッシュ運用
+
+`encopa_ai_cache`は候補評価の説明文のみを保持し、利用者データも検索条件の平文も含みません（キーはSHA-256ハッシュ）。TTLは10分です。
+
+- プロンプト・モデル・サンプリング設定を変更したときは、`app/api/agent/route.ts`の`PROMPT_VERSION`を更新してください。旧プロンプト由来の説明が再利用されなくなります。
+- 不正な説明文が配信されている場合は、`DELETE FROM encopa_ai_cache;`で即時に無効化できます（次回リクエストから再生成されます）。
+- 期限切れ行は`pnpm db:cleanup`で削除します。
+
+`ENCOPA_AI_PROMPT_CACHE=1`にした場合は、`agent_call_ok`の`cachedTokens`が0より大きくなるかを確認してください。0のままなら、経由先モデルのキャッシュ最小長に届いていないため、有効化の意味はありません。
+
 ## 定期運用
 
 - 毎日：Vercel Functionの5xxとDB接続エラーを確認
-- 毎週：`pnpm db:cleanup`を実行し期限切れデータを削除
+- 毎週：`pnpm db:cleanup`を実行し期限切れデータ（グループ・レート制限・キャッシュ）を削除
 - 毎月：依存関係の監査、Turso利用量、Orca Router利用量を確認
 - 毎月：`agent_call_ok`の`dailyUsed`を確認し、`ENCOPA_AI_DAILY_LIMIT`が実需に合っているか見直す
 - 秘密値漏えい時：Tursoトークン、作成コード、Orcaキーをローテーション
