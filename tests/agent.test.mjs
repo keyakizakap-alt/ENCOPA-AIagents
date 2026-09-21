@@ -208,3 +208,26 @@ test('the run record reports the depth decision and who was asked', async () => 
  assert.match(depth.detail, /条件から追加確認を必須と判定/);
  assert.match(depth.detail, /食事上の配慮|大人数/);
 });
+
+test('a failure reports a coarse reason an operator can act on', async () => {
+ // 資格情報を拒否された場合。鍵・接続先・モデル名は返してはいけません。
+ await control({ mode: 'always_400' });
+ const rejected = await agentPlan({ purpose: '失敗種別テストA', candidates: [shop()] });
+ assert.equal(rejected.body.available, false);
+ assert.equal(rejected.body.reason, 'provider_rejected', JSON.stringify(rejected.body));
+ assert.ok(rejected.body.traceId);
+
+ await control({ mode: 'always_500' });
+ const down = await agentPlan({ purpose: '失敗種別テストB', candidates: [shop()] });
+ assert.equal(down.body.reason, 'provider_unavailable', JSON.stringify(down.body));
+
+ // 秘密は一切含めない。
+ const text = JSON.stringify(rejected.body) + JSON.stringify(down.body);
+ assert.ok(!text.includes('test-orca-key'));
+ assert.ok(!text.includes('127.0.0.1'));
+ assert.ok(!text.includes('mock-model'));
+
+ // 後続のテストに壊れたモックと開いたブレーカーを引き継がせない。
+ await control({ mode: 'ok' });
+ await new Promise((resolve) => setTimeout(resolve, Number(process.env.TEST_BREAKER_COOLDOWN_MS || 1500) + 400));
+});

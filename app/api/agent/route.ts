@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import type { AgentConstraint, AgentDecision, AgentPlan, VenueAgentAdvice } from "@/lib/agent-types";
+import type { AgentConstraint, AgentDecision, AgentFailureReason, AgentPlan, VenueAgentAdvice } from "@/lib/agent-types";
 import { database } from "@/lib/server/db";
 import { hash, HttpError, limit, log, logError, readBody, short } from "@/lib/server/security";
 
@@ -188,11 +188,11 @@ export async function POST(request: NextRequest) {
     log("agent_plan_ok", { traceId, depth: "detailed", calls: 2 + completed.length, selfCheckIssues: plan.selfCheck.issues });
     return planResponse(plan);
   } catch (error) {
-    if (error instanceof HttpError) return NextResponse.json({ available: false, traceId, error: error.message }, { status: error.status, headers: { "Cache-Control": "no-store" } });
+    if (error instanceof HttpError) return NextResponse.json({ available: false, traceId, error: error.message, reason: httpFailureReason(error) }, { status: error.status, headers: { "Cache-Control": "no-store" } });
     breaker.failures += 1;
     if (breaker.failures >= BREAKER_THRESHOLD) breaker.openedAt = Date.now();
-    logError("agent_workflow_failed", { traceId, error: error instanceof Error ? error.name : "unknown", reason: error instanceof Error ? error.message.slice(0, 60) : null, consecutiveFailures: breaker.failures });
-    return NextResponse.json({ available: false, traceId, error: "候補分析を完了できませんでした。店舗候補はそのまま比較できます。" }, { status: 502, headers: { "Cache-Control": "no-store" } });
+    logError("agent_workflow_failed", { traceId, error: error instanceof Error ? error.name : "unknown", reason: failureReason(error), detail: error instanceof Error ? error.message.slice(0, 60) : null, consecutiveFailures: breaker.failures });
+    return NextResponse.json({ available: false, traceId, error: "候補分析を完了できませんでした。店舗候補はそのまま比較できます。", reason: failureReason(error) }, { status: 502, headers: { "Cache-Control": "no-store" } });
   }
 }
 
@@ -462,6 +462,33 @@ function planKey(context: { purpose: string; area: string; budget: number; peopl
   // including the whole record would make the key change on any unrelated field edit.
   const fingerprint = context.candidates.map((candidate) => `${candidate.id}:${candidate.deterministicScore}`).join(",");
   return hash([PLAN_VERSION, context.purpose, context.area, context.budget, context.people, context.priority, context.privateRoom, context.dietary, fingerprint].join("|"));
+}
+
+/**
+ * 失敗を粗い種別に落とします。運用者が原因にたどり着くための最小限で、鍵・接続先・モデル名は
+ * 含みません。ログを読めない環境ではこれが唯一の手がかりになります。
+ */
+function failureReason(error: unknown): AgentFailureReason {
+  if (error instanceof HttpError) return httpFailureReason(error);
+  if (!(error instanceof Error)) return "unknown";
+  if (error.name === "AbortError" || error.name === "TimeoutError") return "provider_timeout";
+  if (error.message === "orca_empty" || error.message === "orca_invalid_json") return "provider_bad_response";
+  const status = Number(/^orca_http_(\d{3})$/.exec(error.message)?.[1]);
+  if (status === 401 || status === 403) return "provider_auth";
+  if (status === 404) return "provider_not_found";
+  if (status === 429) return "provider_rate_limited";
+  if (status >= 500) return "provider_unavailable";
+  if (status >= 400) return "provider_rejected";
+  // fetch 自体が失敗したとき（DNS、接続拒否、TLS）はここに来ます。
+  if (/fetch failed|network|ENOTFOUND|ECONNREFUSED|certificate/i.test(error.message)) return "provider_unavailable";
+  return "unknown";
+}
+
+function httpFailureReason(error: HttpError): AgentFailureReason {
+  if (error.message.includes("設定が完了していません") || error.message.includes("許可されていません") || error.message.includes("接続先設定")) return "not_configured";
+  if (error.message.includes("混み合っています")) return "circuit_open";
+  if (error.status === 429) return "budget_spent";
+  return "unknown";
 }
 
 function breakerOpen() {
