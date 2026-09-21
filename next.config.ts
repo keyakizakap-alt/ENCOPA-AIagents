@@ -2,8 +2,9 @@ import type { NextConfig } from 'next';
 const nextConfig:NextConfig={
   serverExternalPackages:['@libsql/client'],
   images:{remotePatterns:[{protocol:'https',hostname:'imgfp.hotp.jp',pathname:'/**'}]},
-  // The Content-Security-Policy is issued per request by middleware.ts, because a strict
-  // policy needs a fresh nonce on every response. Everything here is request-independent.
+  // Only headers that cannot influence how the page renders. A Content-Security-Policy
+  // was tried here and reverted: see docs/AUDIT-2026-09.md for what it broke and why a
+  // reintroduction has to be verified against a rendered page, not just a passing build.
   async headers(){return [
     {source:'/:path*',headers:[
       {key:'X-Content-Type-Options',value:'nosniff'},

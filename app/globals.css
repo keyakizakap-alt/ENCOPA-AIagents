@@ -2,69 +2,8 @@
 @import "tw-animate-css";
 @import "../vendor/shadcn-tailwind-4.13.0.css";
 @utility scrollbar-none { scrollbar-width:none; &::-webkit-scrollbar{display:none;} }
-
-/* ---------------------------------------------------------------------------
-   Design tokens. Every brand colour lives here; components reference the token
-   utilities (bg-surface, text-muted-ink, ...) instead of repeating hex literals.
-   Text tokens are chosen to clear WCAG 2.2 AA (4.5:1) on --surface, white and
-   --surface-raised; --muted-ink measures 5.14:1 / 5.61:1 / 5.32:1.
-   --------------------------------------------------------------------------- */
-:root{
- --surface:#f7f5ef;
- --surface-raised:#fbfaf6;
- --surface-sunk:#f1efe7;
- --ink:#1e2928;
- --muted-ink:#5f6a67;
- --brand:#1f4b46;
- --brand-deep:#163d39;
- --brand-soft:#e8eee9;
- --brand-line:#dcdad2;
- --cream:#fffaf1;
- --accent:#a85b40;
- --accent-bright:#e17a4e;
- --sand:#d9c9a7;
- --positive:#275a42;
- --positive-soft:#e0ece3;
- --caution:#795d35;
- --caution-soft:#eee6d7;
-
- /* shadcn surface contract, expressed through the tokens above. */
- --background:var(--surface);--foreground:var(--ink);--card:#fff;--card-foreground:var(--ink);
- --popover:#fff;--popover-foreground:var(--ink);--primary:var(--brand);--primary-foreground:var(--cream);
- --secondary:#eeeae0;--secondary-foreground:var(--ink);--muted:#eeeae0;--muted-foreground:var(--muted-ink);
- --accent-surface:var(--brand-soft);--accent-foreground:var(--brand);--destructive:#b43a32;
- --border:var(--brand-line);--input:#d4d4cd;--ring:#3f6a63;--radius:.8rem;
-}
-@theme inline{
- --color-surface:var(--surface);--color-surface-raised:var(--surface-raised);--color-surface-sunk:var(--surface-sunk);
- --color-ink:var(--ink);--color-muted-ink:var(--muted-ink);
- --color-brand:var(--brand);--color-brand-deep:var(--brand-deep);--color-brand-soft:var(--brand-soft);--color-brand-line:var(--brand-line);
- --color-cream:var(--cream);--color-accent-warm:var(--accent);--color-accent-bright:var(--accent-bright);--color-sand:var(--sand);
- --color-positive:var(--positive);--color-positive-soft:var(--positive-soft);--color-caution:var(--caution);--color-caution-soft:var(--caution-soft);
- --color-background:var(--background);--color-foreground:var(--foreground);--color-card:var(--card);--color-card-foreground:var(--card-foreground);--color-popover:var(--popover);--color-popover-foreground:var(--popover-foreground);--color-primary:var(--primary);--color-primary-foreground:var(--primary-foreground);--color-secondary:var(--secondary);--color-secondary-foreground:var(--secondary-foreground);--color-muted:var(--muted);--color-muted-foreground:var(--muted-foreground);--color-accent:var(--accent-surface);--color-accent-foreground:var(--accent-foreground);--color-destructive:var(--destructive);--color-border:var(--border);--color-input:var(--input);--color-ring:var(--ring);--radius-sm:calc(var(--radius) - 4px);--radius-md:calc(var(--radius) - 2px);--radius-lg:var(--radius);--radius-xl:calc(var(--radius) + 4px);--font-sans:"Hiragino Sans","Yu Gothic UI","Yu Gothic",system-ui,sans-serif;
-}
-
-*{box-sizing:border-box}
-html{scroll-behavior:smooth}
-body{margin:0;background:var(--surface);color:var(--ink);font-family:var(--font-sans)}
-/* A faint woven grain keeps the large flat panels from reading as a default template. */
-body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;opacity:.5;
- background-image:repeating-linear-gradient(115deg,rgba(31,75,70,.022) 0 1px,transparent 1px 7px),repeating-linear-gradient(25deg,rgba(168,91,64,.018) 0 1px,transparent 1px 9px)}
-.font-serif{font-family:"Yu Mincho","Hiragino Mincho ProN",Georgia,serif}
-button,input{font:inherit}
-
-.enc-input{display:block;width:100%;min-width:0;border:1px solid var(--input);border-radius:12px;background:#fff;padding:11px 12px;font-size:16px;color:var(--ink);line-height:1.5}
-.enc-primary,.enc-secondary{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;border-radius:12px;padding:10px 16px;font-size:14px;font-weight:600;cursor:pointer}
-.enc-primary{background:var(--brand);color:#fff;border:1px solid var(--brand)}
-.enc-primary:hover{background:var(--brand-deep);border-color:var(--brand-deep)}
-.enc-secondary{border:1px solid var(--input);background:#fff;color:var(--brand)}
-.enc-secondary:hover{background:#eef2ed}
-button:disabled{opacity:.55;cursor:not-allowed}
-button[aria-busy="true"]{cursor:progress}
-
-/* A single focus treatment for every interactive element. The previous ring was a 35%
-   alpha wash measuring 1.68:1 against the page, below the 3:1 that WCAG 2.2 SC 1.4.11
-   requires of a focus indicator; this one measures 5.58:1. */
-:where(a,button,input,select,textarea,summary,[tabindex]):focus-visible{outline:3px solid var(--ring);outline-offset:2px;border-radius:4px}
-
+:root{--background:#f7f5ef;--foreground:#1e2928;--card:#fff;--card-foreground:#1e2928;--popover:#fff;--popover-foreground:#1e2928;--primary:#1f4b46;--primary-foreground:#fffaf1;--secondary:#eeeae0;--secondary-foreground:#1e2928;--muted:#eeeae0;--muted-foreground:#687370;--accent:#e8eee9;--accent-foreground:#1f4b46;--destructive:#b43a32;--border:#dcdad2;--input:#d4d4cd;--ring:#507e77;--radius:.8rem;}
+@theme inline{--color-background:var(--background);--color-foreground:var(--foreground);--color-card:var(--card);--color-card-foreground:var(--card-foreground);--color-popover:var(--popover);--color-popover-foreground:var(--popover-foreground);--color-primary:var(--primary);--color-primary-foreground:var(--primary-foreground);--color-secondary:var(--secondary);--color-secondary-foreground:var(--secondary-foreground);--color-muted:var(--muted);--color-muted-foreground:var(--muted-foreground);--color-accent:var(--accent);--color-accent-foreground:var(--accent-foreground);--color-destructive:var(--destructive);--color-border:var(--border);--color-input:var(--input);--color-ring:var(--ring);--radius-sm:calc(var(--radius) - 4px);--radius-md:calc(var(--radius) - 2px);--radius-lg:var(--radius);--radius-xl:calc(var(--radius) + 4px);--font-sans:"Hiragino Sans","Yu Gothic UI","Yu Gothic",system-ui,sans-serif;}
+*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--background);color:var(--foreground);font-family:var(--font-sans)}.font-serif{font-family:"Yu Mincho","Hiragino Mincho ProN",Georgia,serif}button,input{font:inherit}button:focus-visible,input:focus-visible{outline:3px solid rgba(80,126,119,.35);outline-offset:2px}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.01ms!important;transition-duration:.01ms!important}}
+.enc-input{display:block;width:100%;min-width:0;border:1px solid #d4d4cd;border-radius:12px;background:white;padding:11px 12px;font-size:16px;color:#1e2928;line-height:1.5}.enc-primary,.enc-secondary{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;border-radius:12px;padding:10px 16px;font-size:14px;font-weight:600;cursor:pointer}.enc-primary{background:#1f4b46;color:white}.enc-primary:hover{background:#163d39}.enc-secondary{border:1px solid #d4d4cd;background:white;color:#1f4b46}.enc-secondary:hover{background:#eef2ed}button:disabled{opacity:.55;cursor:wait}a:focus-visible,textarea:focus-visible,select:focus-visible{outline:3px solid #507e77;outline-offset:3px}
