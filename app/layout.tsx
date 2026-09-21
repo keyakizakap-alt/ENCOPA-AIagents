@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "ENCOPA（エンコパ） | 決めるところから、予定に入るまで",
-  description: "目的と予算から会場を絞り、参加者確認、幹事承認、予約と予定確保までを支援する宴会オーケストレーター。",
+  description: "会場選び、アレルギー確認、プラン共有、参加者との連絡をひとつにまとめる会食・宴会アプリ。",
   icons: {
     icon: "/favicon.svg",
     shortcut: "/favicon.svg",

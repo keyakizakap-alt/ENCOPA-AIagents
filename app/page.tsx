@@ -3,11 +3,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { CreateGroup } from "@/components/encopa/create-group";
 import { AllergyPicker } from "@/components/encopa/allergy-picker";
-import { MapLinks } from "@/components/encopa/maps";
+import { MapLinks, VenueMap } from "@/components/encopa/maps";
 import { EMPTY_ALLERGY, type AllergyProfile } from "@/lib/group-types";
 import {
-  ArrowRight, CalendarDays, Check, ChevronRight, CircleCheck, Clock3, Download,
-  MapPin, RefreshCw, Route, Search, Settings2, ShieldCheck, Sparkles,
+  ArrowRight, CalendarDays, Check, ChevronRight, CircleCheck, Clock3, Copy, Download,
+  MapPin, RefreshCw, Search, Settings2, Share2, ShieldCheck, Sparkles,
   Users, UtensilsCrossed, WalletCards,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -20,7 +20,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 
 type Priority = "balance" | "conversation" | "cost" | "access";
-type Autonomy = "suggest" | "prepare" | "execute";
 type Query = { purpose:string; area:string; budget:number; people:number; priority:Priority; privateRoom:boolean; dietary:boolean };
 type VenueBase = {
   id:string; name:string; genre:string; price:number; capacity:number; base:number;
@@ -28,7 +27,6 @@ type VenueBase = {
   purpose:string[]; tags:string[]; minutes:number; risk:string; color:string;
 };
 type Venue = VenueBase & { score:number; reason:string; walk:string; availability:string; breakdown:{fit:number; budget:number; operation:number} };
-type RouterState = { route:string; model:string|null; summary:string; traceId?:string; latencyMs?:number; tokenBudget?:number };
 type Stage = "draft" | "ranked" | "collecting" | "awaiting_approval" | "scheduled";
 type AuditEvent = { id:string; label:string; detail:string };
 
@@ -54,8 +52,6 @@ export default function Home() {
   const [people,setPeople]=useState("18");
   const [priority,setPriority]=useState<Priority>("balance");
   const [draftPriority,setDraftPriority]=useState<Priority>("balance");
-  const [autonomy,setAutonomy]=useState<Autonomy>("prepare");
-  const [draftAutonomy,setDraftAutonomy]=useState<Autonomy>("prepare");
   const [privateRoom,setPrivateRoom]=useState(true);
   const [draftPrivateRoom,setDraftPrivateRoom]=useState(true);
   const [dietary,setDietary]=useState(true);
@@ -70,14 +66,16 @@ export default function Home() {
   const [selected,setSelected]=useState(0);
   const [approvalOpen,setApprovalOpen]=useState(false);
   const [settingsOpen,setSettingsOpen]=useState(false);
+  const [allergyOpen,setAllergyOpen]=useState(false);
+  const [shareStatus,setShareStatus]=useState("");
   const [completed,setCompleted]=useState(false);
   const [failover,setFailover]=useState(false);
   const [stage,setStage]=useState<Stage>("draft");
   const [audit,setAudit]=useState<AuditEvent[]>([{id:"init",label:"会を作成",detail:"外部操作はまだ行っていません"}]);
   const [restored,setRestored]=useState(false);
-  const [router,setRouter]=useState<RouterState>({route:"待機中",model:null,summary:"条件が確定するとOrca Routerが最適な推論経路を選びます。",tokenBudget:0});
 
   const total=Number(budget||0)*Number(people||0);
+  const hasAllergy=allergy.status==="selected"&&allergy.items.length>0;
   const candidates=useMemo(()=>rankVenues(query,failover),[query,failover]);
   const chosen=candidates[Math.min(selected,candidates.length-1)] ?? candidates[0];
   const stageIndex={draft:0,ranked:1,collecting:2,awaiting_approval:3,scheduled:4}[stage];
@@ -87,7 +85,7 @@ export default function Home() {
   const search = async (override?:Partial<Query>) => {
     const next:Query={
       purpose, area:area.trim()||"現在地周辺", budget:Math.max(1000,Number(budget)||5500),
-      people:Math.max(2,Number(people)||2), priority, privateRoom, dietary, ...override,
+      people:Math.max(2,Number(people)||2), priority, privateRoom, dietary:dietary||hasAllergy, ...override,
     };
     if(next.budget>30000||next.people>200){setSearchError("予算は30000円以下、人数は200名以下で入力してください。");return;}
     setSearchError("");
@@ -96,12 +94,10 @@ export default function Home() {
     try {
       const response=await fetch("/api/agent",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(next)});
       if(!response.ok)throw new Error("request_failed");
-      const data=await response.json() as Partial<RouterState>;
-      setRouter({route:data.route??"deterministic-fallback",model:data.model??null,summary:data.summary??"評価方針を更新しました。",traceId:data.traceId,latencyMs:data.latencyMs,tokenBudget:data.tokenBudget});
+      await response.json();
       addAudit("候補を再評価",`${next.purpose}・${next.people}名・上限${next.budget.toLocaleString()}円`);
     } catch {
-      setRouter({route:"deterministic-fallback",model:null,summary:"通信に失敗したため、安全なローカル評価で候補を更新しました。",tokenBudget:0});
-      addAudit("フォールバック", "外部通信を使わず候補生成を継続");
+      addAudit("候補を更新", "保存されている条件から候補を並べ直しました");
     } finally {
       setSearching(false); setSearched(true); setStage("ranked");
       setTimeout(()=>document.getElementById("results")?.scrollIntoView({behavior:"smooth",block:"start"}),60);
@@ -109,7 +105,7 @@ export default function Home() {
   };
 
   const applySettings=()=>{
-    setPriority(draftPriority); setAutonomy(draftAutonomy); setPrivateRoom(draftPrivateRoom); setDietary(draftDietary); setEventDate(draftEventDate); setEventTime(draftEventTime);
+    setPriority(draftPriority); setPrivateRoom(draftPrivateRoom); setDietary(draftDietary); setEventDate(draftEventDate); setEventTime(draftEventTime);
     setSettingsOpen(false);
     void search({priority:draftPriority,privateRoom:draftPrivateRoom,dietary:draftDietary});
   };
@@ -123,11 +119,33 @@ export default function Home() {
     const link=document.createElement("a");link.href=url;link.download="encopa-event.ics";link.click();URL.revokeObjectURL(url);
   };
 
+  const planText=()=>[
+    `【${query.purpose}】`,
+    `${eventDate} ${eventTime}`,
+    `${chosen?.name??"会場未定"}（${addresses[chosen?.id]||query.area}）`,
+    `${query.people}名・1人 ${chosen?.price.toLocaleString()??query.budget.toLocaleString()}円目安`,
+    hasAllergy?"アレルギー確認：あり（詳細は幹事が個別に確認）":"アレルギー確認：設定なし",
+    "詳細・出欠はENCOPAのグループで確認してください。",
+  ].join("\n");
+
+  const sharePlan=async()=>{
+    setShareStatus("");
+    try{
+      if(navigator.share){await navigator.share({title:`${query.purpose}のプラン`,text:planText(),url:location.href});setShareStatus("共有しました");return;}
+      await navigator.clipboard.writeText(`${planText()}\n${location.href}`);setShareStatus("共有用テキストをコピーしました");
+    }catch(error){if((error as DOMException).name!=="AbortError")setShareStatus("共有できませんでした。もう一度お試しください。");}
+  };
+
+  const copyPlan=async()=>{
+    try{await navigator.clipboard.writeText(`${planText()}\n${location.href}`);setShareStatus("共有用テキストをコピーしました");}
+    catch{setShareStatus("コピーできませんでした。ブラウザの権限をご確認ください。");}
+  };
+
   const advanceWorkflow=()=>{
     if(stage==="scheduled"){downloadCalendar();return}
-    if(stage==="collecting"){setStage("awaiting_approval");addAudit("参加者回答を集約",`${query.people}名分のデモ回答を反映`);return}
+    if(stage==="collecting"){setStage("awaiting_approval");addAudit("参加者の回答を確認","出欠と希望条件をまとめました");return}
     if(stage==="awaiting_approval"){setStage("scheduled");addAudit("幹事が最終承認","予定ファイルを作成。外部予約は未実行");downloadCalendar();return}
-    setCompleted(true);setStage("collecting");addAudit("デモを開始","予約権限なし・回答収集のみ");
+    setCompleted(true);setStage("collecting");addAudit("参加者確認を開始","共有リンクから回答を受け付けます");
   };
 
   useEffect(()=>{
@@ -142,6 +160,8 @@ export default function Home() {
         if(Array.isArray(value.audit))setAudit(value.audit);
         if(value.eventDate)setEventDate(value.eventDate);
         if(value.eventTime)setEventTime(value.eventTime);
+        if(value.allergy)setAllergy(value.allergy);
+        if(value.addresses)setAddresses(value.addresses);
       }
     } catch {}
     setRestored(true);
@@ -149,8 +169,8 @@ export default function Home() {
 
   useEffect(()=>{
     if(!restored)return;
-    try {localStorage.setItem("encopa-session-v1",JSON.stringify({query,stage,audit,eventDate,eventTime}));} catch {}
-  },[restored,query,stage,audit,eventDate,eventTime]);
+    try {localStorage.setItem("encopa-session-v1",JSON.stringify({query,stage,audit,eventDate,eventTime,allergy,addresses}));} catch {}
+  },[restored,query,stage,audit,eventDate,eventTime,allergy,addresses]);
 
   useEffect(()=>{
     const context=(document as Document & {modelContext?:{registerTool:(tool:unknown,options?:{signal?:AbortSignal})=>void|Promise<void>}}).modelContext;
@@ -159,10 +179,10 @@ export default function Home() {
     void Promise.all([
       context.registerTool({
         name:"stage_venue_search",title:"候補を再評価",
-        description:"目的・エリア・予算・人数を反映し、Orca Router経由で候補評価を開始します。予約は実行しません。",
+        description:"目的・エリア・予算・人数を反映し、候補を並べ直します。",
         inputSchema:{type:"object",properties:{purpose:{type:"string"},area:{type:"string"},budget:{type:"integer",minimum:1000},people:{type:"integer",minimum:2}},required:["purpose","area","budget","people"],additionalProperties:false},
         annotations:{readOnlyHint:false,untrustedContentHint:false},
-        execute:async(input:unknown)=>{const v=input as {purpose:string;area:string;budget:number;people:number};setPurpose(v.purpose);setArea(v.area);setBudget(String(v.budget));setPeople(String(v.people));await search(v);return{status:"ranked",router:"OrcaRouter",reservation_created:false,candidates:3}}
+        execute:async(input:unknown)=>{const v=input as {purpose:string;area:string;budget:number;people:number};setPurpose(v.purpose);setArea(v.area);setBudget(String(v.budget));setPeople(String(v.people));await search(v);return{status:"ranked",reservation_created:false,candidates:3}}
       },{signal:lifecycle.signal}),
       context.registerTool({
         name:"start_participant_confirmation",title:"参加者確認を開始",
@@ -181,7 +201,7 @@ export default function Home() {
     <header className="sticky top-0 z-40 border-b border-[#1e2928]/10 bg-[#f7f5ef]/92 backdrop-blur-xl">
       <div className="mx-auto flex h-16 max-w-[1440px] items-center justify-between px-4 sm:px-7 lg:px-10">
         <div className="flex items-center gap-3"><div className="grid size-9 place-items-center rounded-[12px] bg-[#1f4b46] text-[#fffaf1]"><UtensilsCrossed className="size-[18px]"/></div><div><p className="text-[20px] font-black tracking-[.08em]">ENCOPA <span className="font-sans text-xs font-semibold tracking-normal text-[#687371]">エンコパ</span></p><p className="hidden text-[11px] text-[#687371] sm:block">決めるところから、予定に入るまで。</p></div></div>
-        <div className="flex items-center gap-2"><Badge className="hidden border-[#1f4b46]/15 bg-white text-[#36504c] sm:flex" variant="outline"><Route className="mr-1 size-3.5"/>Orca Router</Badge><Button onClick={()=>{setDraftPriority(priority);setDraftAutonomy(autonomy);setDraftPrivateRoom(privateRoom);setDraftDietary(dietary);setDraftEventDate(eventDate);setDraftEventTime(eventTime);setSettingsOpen(true)}} variant="outline" className="h-9 rounded-full border-[#1e2928]/15 bg-white px-4"><Settings2 className="mr-2 size-4"/>進行設定</Button></div>
+        <div className="flex items-center gap-2"><Button onClick={()=>void sharePlan()} variant="outline" className="hidden h-9 rounded-full border-[#1e2928]/15 bg-white px-4 sm:inline-flex"><Share2 className="mr-2 size-4"/>プラン共有</Button><Button onClick={()=>{setDraftPriority(priority);setDraftPrivateRoom(privateRoom);setDraftDietary(dietary);setDraftEventDate(eventDate);setDraftEventTime(eventTime);setSettingsOpen(true)}} variant="outline" className="h-9 rounded-full border-[#1e2928]/15 bg-white px-4"><Settings2 className="mr-2 size-4"/>詳細設定</Button></div>
       </div>
     </header>
 
@@ -194,34 +214,34 @@ export default function Home() {
         <div className="overflow-hidden rounded-[28px] border border-[#1e2928]/10 bg-[#1f4b46] shadow-[0_18px_60px_rgba(31,75,70,.14)]">
           <div className="grid gap-7 p-5 sm:p-7 xl:grid-cols-[1fr_280px] xl:p-9">
             <div><div className="mb-5 flex items-center gap-2 text-[#d9c9a7]"><Sparkles className="size-4"/><span className="text-[13px] font-semibold tracking-[.08em]">集まる日の準備を、ひとつに</span></div><h1 className="max-w-[680px] font-serif text-[clamp(2rem,4.2vw,4.2rem)] leading-[1.04] tracking-[-.045em] text-[#fffaf1]">条件を変えるたび、<br className="hidden sm:block"/>候補と理由を組み直します。</h1><p className="mt-4 max-w-2xl text-[15px] leading-7 text-[#e5e8df]/75">候補を比べて、予約内容をみんなで共有。アレルギーの確認も、待ち合わせの連絡も、この会のグループで。</p></div>
-            <div className="rounded-[22px] border border-white/12 bg-white/[.07] p-5 text-[#fffaf1]"><p className="text-xs text-white/55">現在の入力上限</p><p className="mt-2 text-3xl font-semibold tracking-tight">{total.toLocaleString()}円</p><div className="mt-5 space-y-3 text-sm"><div className="flex justify-between"><span className="text-white/55">開催</span><span>{eventDate.slice(5).replace("-","/")} {eventTime}</span></div><div className="flex justify-between"><span className="text-white/55">優先</span><span>{priorityLabels[priority]}</span></div><div className="flex justify-between"><span className="text-white/55">進め方</span><span>{autonomy==="suggest"?"提案のみ":autonomy==="prepare"?"予約直前まで":"承認後に実行"}</span></div><div className="border-t border-white/10 pt-3 text-[12px] leading-5 text-white/55">個人名をモデルへ送らず、集約条件だけを評価します。</div></div></div>
+            <div className="rounded-[22px] border border-white/12 bg-white/[.07] p-5 text-[#fffaf1]"><p className="text-xs text-white/55">予算の目安</p><p className="mt-2 text-3xl font-semibold tracking-tight">{total.toLocaleString()}円</p><div className="mt-5 space-y-3 text-sm"><div className="flex justify-between"><span className="text-white/55">開催</span><span>{eventDate.slice(5).replace("-","/")} {eventTime}</span></div><div className="flex justify-between"><span className="text-white/55">優先</span><span>{priorityLabels[priority]}</span></div><div className="flex justify-between"><span className="text-white/55">アレルギー</span><span>{hasAllergy?`${allergy.items.length}項目を確認`:allergy.status==="none"?"なし":"未設定"}</span></div><div className="border-t border-white/10 pt-3 text-[12px] leading-5 text-white/65">選んだ条件とプランは、いつでも参加者へ共有できます。</div></div></div>
           </div>
-          <div className="grid gap-3 border-t border-white/10 bg-[#163d39] p-4 sm:grid-cols-2 sm:p-5 xl:grid-cols-[1fr_1.25fr_.75fr_.65fr_auto]">
+          <div className="grid gap-3 border-t border-white/10 bg-[#163d39] p-4 sm:grid-cols-2 sm:p-5 xl:grid-cols-[.9fr_1.15fr_.68fr_.56fr_.85fr_auto]">
             <Field label="目的"><Select value={purpose} onValueChange={setPurpose}><SelectTrigger className="h-12 w-full rounded-xl border-white/10 bg-white text-[#1e2928]"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="忘年会">忘年会</SelectItem><SelectItem value="新年会">新年会</SelectItem><SelectItem value="歓迎会">歓迎会</SelectItem><SelectItem value="送別会">送別会</SelectItem><SelectItem value="懇親会">懇親会</SelectItem><SelectItem value="打ち上げ">打ち上げ</SelectItem></SelectContent></Select></Field>
             <Field label="エリア"><div className="relative"><MapPin className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[#7d8986]"/><Input value={area} onChange={e=>setArea(e.target.value)} className="h-12 rounded-xl border-white/10 bg-white pl-9 text-base"/></div></Field>
             <Field label="予算 / 人"><div className="relative"><Input inputMode="numeric" value={budget} onChange={e=>setBudget(e.target.value.replace(/\D/g,""))} className="h-12 rounded-xl border-white/10 bg-white pr-9 text-base"/><span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-[#7d8986]">円</span></div></Field>
             <Field label="人数"><div className="relative"><Input inputMode="numeric" value={people} onChange={e=>setPeople(e.target.value.replace(/\D/g,""))} className="h-12 rounded-xl border-white/10 bg-white pr-9 text-base"/><span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-[#7d8986]">名</span></div></Field>
+            <Field label="アレルギー"><button type="button" onClick={()=>setAllergyOpen(true)} className="flex h-12 w-full items-center justify-between rounded-xl border border-white/10 bg-white px-3 text-left text-sm font-medium text-[#1e2928] transition hover:bg-[#f7f5ef]"><span className="truncate">{hasAllergy?`${allergy.items.length}項目を設定`:allergy.status==="none"?"なし":"設定する"}</span><ChevronRight className="size-4 text-[#7d8986]"/></button></Field>
             <div className="flex items-end"><Button disabled={searching} onClick={()=>void search()} className="h-12 w-full rounded-xl bg-[#e17a4e] px-6 text-base font-semibold text-white shadow-lg hover:bg-[#ee8a5e] xl:w-auto">{searching?<RefreshCw className="mr-2 size-4 animate-spin"/>:<Search className="mr-2 size-4"/>}{searching?"再評価中":"候補を更新"}</Button></div>
           </div>
         </div>
 
         <section id="results" className="scroll-mt-24 pt-8">
           {searchError&&<p role="alert" className="mb-4 text-sm text-red-700">{searchError}</p>}
-          <p className="mb-4 text-sm leading-6 text-[#687370]">以下は条件比較用のデモ店舗です。実店舗や空席の検索ではありません。グループ作成時に、実際の店名と住所を入力してください。</p>
-          {allergy.status==='selected'&&<p className="mb-4 rounded-xl bg-[#eee6d7] p-4 text-sm">確認が必要な食材：{allergy.items.join('、')||'選択してください'}。候補の表示はアレルギー対応を保証しません。</p>}
-          <div className="mb-4 flex flex-col justify-between gap-3 sm:flex-row sm:items-end"><div><p className="text-[12px] font-semibold tracking-[.12em] text-[#aa5a3d]">SHORTLIST · {query.area}</p><h2 className="mt-1 font-serif text-3xl font-semibold tracking-tight">{searched?`${query.purpose}に合う3候補`:"条件に合わせた初期候補"}</h2></div><p className="max-w-md text-sm leading-6 text-[#6e7774]">現在は実店舗連携前の評価デモです。入力変更後に「候補を更新」で順位・点数・理由が変わります。</p></div>
+          {allergy.status==='selected'&&<p className="mb-4 rounded-xl bg-[#eee6d7] p-4 text-sm"><span className="font-semibold">店舗へ確認する食材：</span>{allergy.items.join('、')||'選択してください'}。予約前に、調理時の混入を含めて店舗へご確認ください。</p>}
+          <div className="mb-4 flex flex-col justify-between gap-3 sm:flex-row sm:items-end"><div><p className="text-[12px] font-semibold tracking-[.12em] text-[#aa5a3d]">PICK UP · {query.area}</p><h2 className="mt-1 font-serif text-3xl font-semibold tracking-tight">{searched?`${query.purpose}に合う3候補`:"条件に合う会場候補"}</h2></div><p className="max-w-md text-sm leading-6 text-[#6e7774]">予算、人数、過ごしやすさから候補を比較できます。空席とアレルギー対応は予約前に店舗へ確認してください。</p></div>
           {failover&&<div className="mb-4 flex items-start gap-3 rounded-2xl border border-[#d78a66]/30 bg-[#fff3eb] p-4 text-sm text-[#7c4631]"><RefreshCw className="mt-0.5 size-4 shrink-0"/><div><p className="font-semibold">第1候補が満席になったため、自動で再評価しました</p><p className="mt-1 text-xs">予算・個室・食事制限を維持したまま、次点候補を先頭へ切り替えています。</p></div></div>}
           <div className="grid gap-4 xl:grid-cols-3">
             {candidates.map((v,i)=><button key={v.id} onClick={()=>{setSelected(i);setCompleted(false);setStage("ranked")}} className={`group overflow-hidden rounded-[22px] border bg-white text-left transition duration-300 hover:-translate-y-1 hover:shadow-xl ${selected===i?"border-[#1f4b46] ring-2 ring-[#1f4b46]/12":"border-[#1e2928]/10"}`}>
               <div className={`relative h-28 bg-gradient-to-br ${v.color} p-5 text-white`}><div className="absolute inset-0 opacity-20 [background-image:radial-gradient(circle_at_20%_20%,white_0,transparent_32%),linear-gradient(120deg,transparent_55%,white_55%,transparent_56%)]"/><div className="relative flex items-start justify-between"><Badge className="border-white/15 bg-white/15 text-white">{i===0?"最も条件に合う":`候補 ${i+1}`}</Badge><div className="grid size-12 place-items-center rounded-full bg-white text-[#244742] shadow-lg"><span className="text-lg font-bold">{v.score}</span></div></div></div>
-              <div className="p-5"><p className="text-xs font-medium text-[#aa5a3d]">{v.genre}</p><h3 className="mt-1 text-xl font-semibold tracking-tight">{v.name}</h3><div className="mt-3 flex items-center justify-between text-sm"><span className="font-semibold">{v.price.toLocaleString()}円 / 人</span><span className="text-[#67726f]">{v.walk}</span></div><p className="mt-4 min-h-[72px] text-sm leading-6 text-[#687370]">{v.reason}</p><div className="mt-4 grid grid-cols-3 gap-2 rounded-xl bg-[#f7f5ef] p-3"><ScorePart label="条件適合" value={v.breakdown.fit}/><ScorePart label="予算" value={v.breakdown.budget}/><ScorePart label="運用安全" value={v.breakdown.operation}/></div><div className="mt-4 flex flex-wrap gap-2">{v.tags.map(t=><span key={t} className="rounded-full bg-[#f3f0e8] px-2.5 py-1 text-xs text-[#58625f]">{t}</span>)}</div><div className="mt-5 flex items-center justify-between border-t border-[#1e2928]/8 pt-4"><span className="flex items-center gap-1.5 text-xs font-medium text-[#2f6b57]"><CircleCheck className="size-4"/>{v.availability}</span>{selected===i&&<span className="text-xs font-semibold text-[#1f4b46]">選択中</span>}</div></div>
+              <div className="p-5"><p className="text-xs font-medium text-[#aa5a3d]">{v.genre}</p><h3 className="mt-1 text-xl font-semibold tracking-tight">{v.name}</h3><div className="mt-3 flex items-center justify-between text-sm"><span className="font-semibold">{v.price.toLocaleString()}円 / 人</span><span className="text-[#67726f]">{v.walk}</span></div><p className="mt-4 min-h-[72px] text-sm leading-6 text-[#687370]">{v.reason}</p><div className="mt-4 grid grid-cols-3 gap-2 rounded-xl bg-[#f7f5ef] p-3"><ScorePart label="条件との一致" value={v.breakdown.fit}/><ScorePart label="予算" value={v.breakdown.budget}/><ScorePart label="利用しやすさ" value={v.breakdown.operation}/></div><div className="mt-4 flex flex-wrap gap-2">{v.tags.map(t=><span key={t} className="rounded-full bg-[#f3f0e8] px-2.5 py-1 text-xs text-[#58625f]">{t}</span>)}</div><div className="mt-5 flex items-center justify-between border-t border-[#1e2928]/8 pt-4"><span className="flex items-center gap-1.5 text-xs font-medium text-[#2f6b57]"><CircleCheck className="size-4"/>{v.availability}</span>{selected===i&&<span className="text-xs font-semibold text-[#1f4b46]">選択中</span>}</div></div>
             </button>)}
           </div>
-          <div className="mt-5 space-y-3 rounded-2xl border bg-white p-5"><label className="block text-sm font-semibold">選択した会場の住所<Input className="mt-2 h-12 bg-white" maxLength={200} placeholder="実際の店舗住所を入力" value={addresses[chosen?.id]||""} onChange={e=>setAddresses({...addresses,[chosen.id]:e.target.value})}/></label><MapLinks address={addresses[chosen?.id]||""}/></div>
+          <div className="mt-5 grid gap-5 rounded-[24px] border border-[#1e2928]/10 bg-white p-5 shadow-sm sm:p-6 lg:grid-cols-[.9fr_1.1fr]"><div><p className="text-xs font-semibold tracking-[.1em] text-[#aa5a3d]">場所を確認</p><h3 className="mt-1 text-xl font-semibold">{chosen?.name}</h3><label className="mt-5 block text-sm font-semibold">会場の住所<Input className="mt-2 h-12 bg-white" maxLength={200} placeholder="店舗の住所を入力" value={addresses[chosen?.id]||""} onChange={e=>setAddresses({...addresses,[chosen.id]:e.target.value})}/></label><div className="mt-3"><MapLinks address={addresses[chosen?.id]||query.area}/></div><p className="mt-3 text-xs leading-5 text-[#7b8381]">住所を入力すると、参加者へ共有するプランと地図にも反映されます。</p></div><VenueMap address={addresses[chosen?.id]||query.area} label={chosen?.name||"選択した会場"}/></div>
           <CreateGroup title={`${query.purpose}のグループ`} initial={{venueName:chosen?.name||"",address:addresses[chosen?.id]||"",date:eventDate,time:eventTime,people:query.people,price:chosen?.price||query.budget,status:"planning",bookingReference:"",note:"",website:""}}/>
           <div className="mt-5 grid gap-4 rounded-[24px] border border-[#1e2928]/10 bg-white p-5 shadow-sm sm:p-6 xl:grid-cols-[1.1fr_.9fr_auto] xl:items-center">
-            <div className="flex items-center gap-2"><span className="grid size-9 place-items-center rounded-xl bg-[#e8eee9] text-[#1f4b46]"><Users className="size-4"/></span><div><p className="text-sm font-semibold">端末用の予定ファイル</p><p className="text-xs text-[#7b8381]">共有せず、カレンダーに予定だけを保存できます</p></div></div>
-            <div className="grid grid-cols-3 gap-3 text-center"><MiniStat label="デモ回答" value={`${Math.max(2,query.people-4)} / ${query.people}`}/><MiniStat label="第1候補OK" value={`${Math.max(2,query.people-6)}名`}/><MiniStat label="未回答" value={`${Math.min(4,query.people)}名`}/></div>
+            <div className="flex items-center gap-2"><span className="grid size-9 place-items-center rounded-xl bg-[#e8eee9] text-[#1f4b46]"><Users className="size-4"/></span><div><p className="text-sm font-semibold">プランを確定して共有</p><p className="text-xs text-[#7b8381]">参加者用グループとカレンダー予定をまとめて準備できます</p></div></div>
+            <div className="grid grid-cols-3 gap-3 text-center"><MiniStat label="参加予定" value={`${query.people}名`}/><MiniStat label="1人あたり" value={`${(chosen?.price||query.budget).toLocaleString()}円`}/><MiniStat label="候補順位" value={`${selected+1}位`}/></div>
             <Button onClick={()=>setApprovalOpen(true)} className="h-12 rounded-xl bg-[#1f4b46] px-6 text-white hover:bg-[#163d39]">予定を確認する<ArrowRight className="ml-2 size-4"/></Button>
           </div>
         </section>
@@ -229,19 +249,22 @@ export default function Home() {
 
       <aside className="lg:sticky lg:top-24 lg:self-start">
         <div className="mb-4 overflow-hidden rounded-[24px] border border-[#1e2928]/10 bg-[#1f4b46] p-5 text-white shadow-[0_16px_40px_rgba(30,41,40,.12)]">
-          <div className="flex items-center justify-between"><div><p className="text-xs font-semibold tracking-[.09em] text-[#d9c9a7]">ORCA ROUTER</p><h2 className="mt-1 text-xl font-semibold">最適な推論経路を選択</h2></div><span className="relative flex size-3"><span className="absolute inline-flex size-full animate-ping rounded-full bg-[#e17a4e] opacity-60"/><span className="relative inline-flex size-3 rounded-full bg-[#e17a4e]"/></span></div>
-          <div className="mt-4 rounded-2xl bg-white/[.07] p-4"><div className="flex items-center justify-between text-xs"><span className="text-white/55">現在の経路</span><span className="font-semibold">{router.route}</span></div>{router.model&&<div className="mt-2 flex items-center justify-between text-xs"><span className="text-white/55">選択モデル</span><span className="max-w-[170px] truncate font-semibold">{router.model}</span></div>}<div className="mt-2 flex items-center justify-between text-xs"><span className="text-white/55">出力上限</span><span className="font-semibold">{router.tokenBudget??0} tokens</span></div>{router.latencyMs!==undefined&&<div className="mt-2 flex items-center justify-between text-xs"><span className="text-white/55">応答時間</span><span className="font-semibold">{router.latencyMs} ms</span></div>}<p className="mt-3 text-xs leading-5 text-white/65">{router.summary}</p>{router.traceId&&<p className="mt-2 truncate font-mono text-[10px] text-white/35">trace {router.traceId}</p>}</div>
-          <div className="mt-4 space-y-3 text-sm"><AgentAction text="条件を構造化して安全判定" done/><AgentAction text="品質・コスト・遅延でモデル選択" active/><AgentAction text="失敗時はローカル評価へ切替" done/></div>
-          <Button onClick={()=>{setFailover(true);setSelected(0);setStage("ranked");addAudit("代替候補へ切替","第1候補を除外し、同じ制約で再評価")}} variant="outline" className="mt-5 w-full rounded-xl border-white/15 bg-white/[.06] text-white hover:bg-white/15 hover:text-white"><RefreshCw className="mr-2 size-4"/>満席時の切替を試す</Button>
+          <div className="flex items-center justify-between"><div><p className="text-xs font-semibold tracking-[.09em] text-[#d9c9a7]">PLAN SHARE</p><h2 className="mt-1 text-xl font-semibold">みんなにプランを共有</h2></div><span className="grid size-10 place-items-center rounded-full bg-white/10"><Share2 className="size-5"/></span></div>
+          <div className="mt-4 rounded-2xl bg-white/[.08] p-4"><p className="text-xs text-white/55">選択中のプラン</p><p className="mt-1 text-lg font-semibold">{chosen?.name}</p><div className="mt-4 space-y-2 text-sm"><div className="flex justify-between gap-4"><span className="text-white/55">日時</span><span className="text-right">{eventDate.slice(5).replace("-","/")} {eventTime}</span></div><div className="flex justify-between gap-4"><span className="text-white/55">人数</span><span>{query.people}名</span></div><div className="flex justify-between gap-4"><span className="text-white/55">予算</span><span>{(chosen?.price||query.budget).toLocaleString()}円 / 人</span></div><div className="flex justify-between gap-4"><span className="text-white/55">場所</span><span className="max-w-[180px] truncate text-right">{addresses[chosen?.id]||query.area}</span></div></div></div>
+          <div className="mt-4 grid grid-cols-2 gap-2"><Button onClick={()=>void sharePlan()} className="rounded-xl bg-[#e17a4e] text-white hover:bg-[#ee8a5e]"><Share2 className="mr-2 size-4"/>共有する</Button><Button onClick={()=>void copyPlan()} variant="outline" className="rounded-xl border-white/15 bg-white/[.06] text-white hover:bg-white/15 hover:text-white"><Copy className="mr-2 size-4"/>コピー</Button></div>
+          {shareStatus&&<p role="status" className="mt-3 text-xs leading-5 text-white/70">{shareStatus}</p>}
+          <Button onClick={()=>{setFailover(true);setSelected(0);setStage("ranked");addAudit("次の候補へ変更","現在の条件を保ったまま候補を切り替えました")}} variant="ghost" className="mt-3 w-full rounded-xl text-white/75 hover:bg-white/10 hover:text-white"><RefreshCw className="mr-2 size-4"/>満席なら次の候補へ</Button>
         </div>
-        <div className="rounded-[24px] border border-[#1e2928]/10 bg-white p-5 shadow-[0_16px_40px_rgba(30,41,40,.07)]"><div className="flex items-center justify-between"><div><p className="text-xs font-semibold tracking-[.09em] text-[#a85b40]">進行状況</p><h2 className="mt-1 text-xl font-semibold">この会の準備</h2></div><span className="text-2xl font-semibold text-[#1f4b46]">{progress}%</span></div><Progress value={progress} className="mt-4 h-2 bg-[#e9e8e1] [&>div]:bg-[#df764a]"/><div className="mt-6 space-y-1"><StatusRow icon={WalletCards} title="目的・予算" detail={`${query.purpose}・${query.budget.toLocaleString()}円`} done/><StatusRow icon={MapPin} title="会場候補" detail={`${query.area}・3件`} done={stageIndex>1} active={stageIndex===1}/><StatusRow icon={Users} title="参加者確認" detail={stageIndex<2?"リンク未送信":stageIndex===2?"回答を収集中":"回答完了"} done={stageIndex>2} active={stageIndex===2}/><StatusRow icon={CalendarDays} title="予約と予定" detail={stage==="scheduled"?"予定ファイル作成済み":"幹事承認後に実行"} done={stage==="scheduled"} active={stage==="awaiting_approval"}/></div><div className="mt-6 rounded-2xl bg-[#f3f0e8] p-4"><div className="flex items-center gap-2 text-sm font-semibold"><ShieldCheck className="size-4 text-[#2f6b57]"/>安全境界</div><p className="mt-2 text-xs leading-5 text-[#6d7572]">個人情報はモデルへ送らず、外部予約は実行しません。店舗への予約は幹事が行い、グループで状況を共有してください。</p></div></div>
-        <div className="mt-4 rounded-[24px] border border-[#1e2928]/10 bg-white p-5"><div className="flex items-center justify-between"><div><p className="text-xs font-semibold tracking-[.09em] text-[#a85b40]">AUDIT TRAIL</p><h2 className="mt-1 text-lg font-semibold">実行証跡</h2></div><Badge variant="outline" className="bg-[#f7f5ef]">端末内保存</Badge></div><div className="mt-4 space-y-3">{audit.slice(0,4).map((item,index)=><div key={item.id} className="flex gap-3"><span className={`mt-1.5 size-2 shrink-0 rounded-full ${index===0?"bg-[#e17a4e]":"bg-[#c7cbc7]"}`}/><div><p className="text-sm font-semibold">{item.label}</p><p className="mt-0.5 text-xs leading-5 text-[#77807e]">{item.detail}</p></div></div>)}</div></div>
+        <div className="rounded-[24px] border border-[#1e2928]/10 bg-white p-5 shadow-[0_16px_40px_rgba(30,41,40,.07)]"><div className="flex items-center justify-between"><div><p className="text-xs font-semibold tracking-[.09em] text-[#a85b40]">進行状況</p><h2 className="mt-1 text-xl font-semibold">この会の準備</h2></div><span className="text-2xl font-semibold text-[#1f4b46]">{progress}%</span></div><Progress value={progress} className="mt-4 h-2 bg-[#e9e8e1] [&>div]:bg-[#df764a]"/><div className="mt-6 space-y-1"><StatusRow icon={WalletCards} title="目的・予算" detail={`${query.purpose}・${query.budget.toLocaleString()}円`} done/><StatusRow icon={MapPin} title="会場候補" detail={`${query.area}・3件`} done={stageIndex>1} active={stageIndex===1}/><StatusRow icon={Users} title="参加者確認" detail={stageIndex<2?"リンク未送信":stageIndex===2?"回答を収集中":"回答完了"} done={stageIndex>2} active={stageIndex===2}/><StatusRow icon={CalendarDays} title="予約と予定" detail={stage==="scheduled"?"カレンダーへ追加済み":"内容を確認して確定"} done={stage==="scheduled"} active={stage==="awaiting_approval"}/></div><div className="mt-6 rounded-2xl bg-[#f3f0e8] p-4"><div className="flex items-center gap-2 text-sm font-semibold"><ShieldCheck className="size-4 text-[#2f6b57]"/>プライバシー</div><p className="mt-2 text-xs leading-5 text-[#6d7572]">アレルギーの詳細は本人と幹事だけが確認できます。参加者全員には表示されません。</p></div></div>
+        <div className="mt-4 rounded-[24px] border border-[#1e2928]/10 bg-white p-5"><div className="flex items-center justify-between"><div><p className="text-xs font-semibold tracking-[.09em] text-[#a85b40]">最近の更新</p><h2 className="mt-1 text-lg font-semibold">プランの履歴</h2></div><Badge variant="outline" className="bg-[#f7f5ef]">この端末</Badge></div><div className="mt-4 space-y-3">{audit.slice(0,4).map((item,index)=><div key={item.id} className="flex gap-3"><span className={`mt-1.5 size-2 shrink-0 rounded-full ${index===0?"bg-[#e17a4e]":"bg-[#c7cbc7]"}`}/><div><p className="text-sm font-semibold">{item.label}</p><p className="mt-0.5 text-xs leading-5 text-[#77807e]">{item.detail}</p></div></div>)}</div></div>
       </aside>
     </section>
 
-    <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}><DialogContent className="max-h-[90vh] overflow-y-auto rounded-[24px] bg-[#fbfaf6] sm:max-w-[560px]"><DialogHeader><DialogTitle className="font-serif text-2xl">ENCOPAの進行設定</DialogTitle><DialogDescription>設定を保存すると、候補をその場で再評価します。</DialogDescription></DialogHeader><div className="space-y-5 py-2"><div className="grid grid-cols-2 gap-3"><div><Label className="mb-2 block">開催日</Label><Input type="date" value={draftEventDate} onChange={e=>setDraftEventDate(e.target.value)} className="h-11 bg-white"/></div><div><Label className="mb-2 block">開始時刻</Label><Input type="time" value={draftEventTime} onChange={e=>setDraftEventTime(e.target.value)} className="h-11 bg-white"/></div></div><div><Label className="mb-2 block">候補選びで優先すること</Label><Select value={draftPriority} onValueChange={v=>setDraftPriority(v as Priority)}><SelectTrigger className="h-11 w-full bg-white"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="balance">バランス</SelectItem><SelectItem value="conversation">会話しやすさ</SelectItem><SelectItem value="cost">予算の収まり</SelectItem><SelectItem value="access">移動しやすさ</SelectItem></SelectContent></Select></div><div><Label className="mb-2 block">自律進行レベル</Label><Select value={draftAutonomy} onValueChange={v=>setDraftAutonomy(v as Autonomy)}><SelectTrigger className="h-11 w-full bg-white"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="suggest">提案のみ</SelectItem><SelectItem value="prepare">予約直前まで</SelectItem><SelectItem value="execute">幹事承認後に予約・予定登録</SelectItem></SelectContent></Select></div><SettingSwitch label="個室・半個室を優先" description="会話のしやすさを評価に加えます" checked={draftPrivateRoom} onCheckedChange={setDraftPrivateRoom}/><SettingSwitch label="食事制限への対応を優先" description="相談可のデモ条件を評価します。対応保証ではありません" checked={draftDietary} onCheckedChange={setDraftDietary}/><AllergyPicker value={allergy} onChange={setAllergy} privateSharing={false}/></div><DialogFooter><Button variant="outline" onClick={()=>setSettingsOpen(false)}>変更しない</Button><Button onClick={applySettings} className="bg-[#1f4b46] text-white hover:bg-[#163d39]">保存して再評価</Button></DialogFooter></DialogContent></Dialog>
+    <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}><DialogContent className="max-h-[90vh] overflow-y-auto rounded-[24px] bg-[#fbfaf6] sm:max-w-[560px]"><DialogHeader><DialogTitle className="font-serif text-2xl">プランの詳細設定</DialogTitle><DialogDescription>日時や候補選びの優先条件を変更できます。</DialogDescription></DialogHeader><div className="space-y-5 py-2"><div className="grid grid-cols-2 gap-3"><div><Label className="mb-2 block">開催日</Label><Input type="date" value={draftEventDate} onChange={e=>setDraftEventDate(e.target.value)} className="h-11 bg-white"/></div><div><Label className="mb-2 block">開始時刻</Label><Input type="time" value={draftEventTime} onChange={e=>setDraftEventTime(e.target.value)} className="h-11 bg-white"/></div></div><div><Label className="mb-2 block">候補選びで優先すること</Label><Select value={draftPriority} onValueChange={v=>setDraftPriority(v as Priority)}><SelectTrigger className="h-11 w-full bg-white"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="balance">バランス</SelectItem><SelectItem value="conversation">会話しやすさ</SelectItem><SelectItem value="cost">予算の収まり</SelectItem><SelectItem value="access">移動しやすさ</SelectItem></SelectContent></Select></div><SettingSwitch label="個室・半個室を優先" description="会話のしやすさを候補選びに加えます" checked={draftPrivateRoom} onCheckedChange={setDraftPrivateRoom}/><SettingSwitch label="食事制限への対応を優先" description="店舗へ相談しやすい候補を優先します" checked={draftDietary} onCheckedChange={setDraftDietary}/><button type="button" onClick={()=>{setSettingsOpen(false);setAllergyOpen(true)}} className="flex min-h-14 w-full items-center justify-between rounded-2xl border border-[#1e2928]/10 bg-white px-4 text-left"><div><p className="text-sm font-semibold">食物アレルギー</p><p className="mt-1 text-xs text-[#77807e]">{hasAllergy?`${allergy.items.join("、")}を確認`:allergy.status==="none"?"なし":"未設定"}</p></div><ChevronRight className="size-4 text-[#77807e]"/></button></div><DialogFooter><Button variant="outline" onClick={()=>setSettingsOpen(false)}>変更しない</Button><Button onClick={applySettings} className="bg-[#1f4b46] text-white hover:bg-[#163d39]">保存して候補を更新</Button></DialogFooter></DialogContent></Dialog>
 
-    <Dialog open={approvalOpen} onOpenChange={setApprovalOpen}><DialogContent className="max-h-[90vh] overflow-y-auto rounded-[24px] border-0 bg-[#fbfaf6] p-0 sm:max-w-[600px]"><DialogHeader className="border-b border-[#1e2928]/10 p-6 text-left"><DialogTitle className="font-serif text-2xl">確認・承認・予定確保</DialogTitle><DialogDescription>外部操作の前に人が承認する段階を明確に分けています。</DialogDescription></DialogHeader><div className="space-y-4 px-6"><div className="rounded-2xl border border-[#1e2928]/10 bg-white p-4"><p className="text-xs text-[#7a8380]">現在の第一候補</p><p className="mt-1 text-lg font-semibold">{chosen?.name}</p><div className="mt-3 grid grid-cols-2 gap-3 text-sm"><span className="text-[#68716f]">開催予定</span><span className="text-right font-medium">{eventDate} {eventTime}</span><span className="text-[#68716f]">費用見込み</span><span className="text-right font-medium">{((chosen?.price??0)*query.people).toLocaleString()}円</span><span className="text-[#68716f]">注意</span><span className="text-right font-medium">{chosen?.risk}</span></div></div><div className="grid gap-3 sm:grid-cols-3"><CheckCard icon={Clock3} title="日程" value="開催日時を固定"/><CheckCard icon={UtensilsCrossed} title="食事" value="店舗への確認が必要"/><CheckCard icon={Users} title="匿名性" value="必要情報だけ集約"/></div>{stage==="scheduled"?<div className="rounded-2xl bg-[#e8f0ea] p-4 text-sm text-[#24533f]"><div className="flex items-center gap-2 font-semibold"><CircleCheck className="size-5"/>予定ファイルを作成しました</div><p className="mt-1 pl-7 text-xs leading-5">カレンダーへ登録できます。外部店舗の予約APIは未接続のため、予約成立とは表示しません。</p></div>:completed?<div className="rounded-2xl bg-[#e8f0ea] p-4 text-sm text-[#24533f]"><div className="flex items-center gap-2 font-semibold"><CircleCheck className="size-5"/>{stage==="awaiting_approval"?"回答が揃い、最終承認待ちです":"参加者確認のデモです"}</div><p className="mt-1 pl-7 text-xs leading-5">操作は監査ログへ記録され、予約権限はまだ使用されていません。</p></div>:<div className="rounded-2xl bg-[#f4eee2] p-4 text-xs leading-5 text-[#75643f]">回答は会場評価に必要な形へ集約し、個人名や自由記述をOrca Routerへ送りません。</div>}</div><DialogFooter className="p-6 pt-2 sm:justify-between"><Button variant="outline" onClick={()=>setApprovalOpen(false)}>候補を見直す</Button><Button onClick={advanceWorkflow} className="bg-[#1f4b46] text-white hover:bg-[#163d39]">{stage==="scheduled"?<><Download className="mr-2 size-4"/>予定を再取得</>:stage==="awaiting_approval"?"最終承認して予定作成":stage==="collecting"?"デモ回答を反映":"デモを開始"}</Button></DialogFooter></DialogContent></Dialog>
+    <Dialog open={allergyOpen} onOpenChange={setAllergyOpen}><DialogContent className="max-h-[90vh] overflow-y-auto rounded-[24px] bg-[#fbfaf6] sm:max-w-[680px]"><DialogHeader><DialogTitle className="font-serif text-2xl">アレルギーを設定</DialogTitle><DialogDescription>確認が必要な食材を選ぶと、プランと店舗への確認事項に反映されます。</DialogDescription></DialogHeader><div className="py-2"><AllergyPicker value={allergy} onChange={setAllergy} privateSharing={false}/></div><DialogFooter><Button onClick={()=>{setAllergyOpen(false);if(allergy.status==="selected")setDietary(true)}} className="bg-[#1f4b46] text-white hover:bg-[#163d39]">設定を保存</Button></DialogFooter></DialogContent></Dialog>
+
+    <Dialog open={approvalOpen} onOpenChange={setApprovalOpen}><DialogContent className="max-h-[90vh] overflow-y-auto rounded-[24px] border-0 bg-[#fbfaf6] p-0 sm:max-w-[600px]"><DialogHeader className="border-b border-[#1e2928]/10 p-6 text-left"><DialogTitle className="font-serif text-2xl">プランの最終確認</DialogTitle><DialogDescription>参加者へ共有する前に、日時・費用・確認事項をご確認ください。</DialogDescription></DialogHeader><div className="space-y-4 px-6"><div className="rounded-2xl border border-[#1e2928]/10 bg-white p-4"><p className="text-xs text-[#7a8380]">選択中の会場</p><p className="mt-1 text-lg font-semibold">{chosen?.name}</p><div className="mt-3 grid grid-cols-2 gap-3 text-sm"><span className="text-[#68716f]">開催予定</span><span className="text-right font-medium">{eventDate} {eventTime}</span><span className="text-[#68716f]">費用見込み</span><span className="text-right font-medium">{((chosen?.price??0)*query.people).toLocaleString()}円</span><span className="text-[#68716f]">確認事項</span><span className="text-right font-medium">{chosen?.risk}</span></div></div><div className="grid gap-3 sm:grid-cols-3"><CheckCard icon={Clock3} title="日程" value="開催日時を確認"/><CheckCard icon={UtensilsCrossed} title="食事" value={hasAllergy?`${allergy.items.length}項目を店舗へ確認`:"特記事項なし"}/><CheckCard icon={Users} title="参加者" value={`${query.people}名で共有`}/></div>{stage==="scheduled"?<div className="rounded-2xl bg-[#e8f0ea] p-4 text-sm text-[#24533f]"><div className="flex items-center gap-2 font-semibold"><CircleCheck className="size-5"/>カレンダー用ファイルを作成しました</div><p className="mt-1 pl-7 text-xs leading-5">端末のカレンダーへ追加できます。店舗への予約状況はグループで共有してください。</p></div>:completed?<div className="rounded-2xl bg-[#e8f0ea] p-4 text-sm text-[#24533f]"><div className="flex items-center gap-2 font-semibold"><CircleCheck className="size-5"/>{stage==="awaiting_approval"?"回答が揃い、最終確認待ちです":"参加者へ確認中です"}</div><p className="mt-1 pl-7 text-xs leading-5">出欠と希望条件をまとめて確認できます。</p></div>:<div className="rounded-2xl bg-[#f4eee2] p-4 text-xs leading-5 text-[#75643f]">確定前に参加者へプランを共有し、出欠と食事に関する希望を確認しましょう。</div>}</div><DialogFooter className="p-6 pt-2 sm:justify-between"><Button variant="outline" onClick={()=>setApprovalOpen(false)}>候補を見直す</Button><Button onClick={advanceWorkflow} className="bg-[#1f4b46] text-white hover:bg-[#163d39]">{stage==="scheduled"?<><Download className="mr-2 size-4"/>予定を再取得</>:stage==="awaiting_approval"?"プランを確定して予定作成":stage==="collecting"?"回答内容を確認":"参加者へ確認する"}</Button></DialogFooter></DialogContent></Dialog>
   </main>;
 }
 
@@ -269,7 +292,7 @@ function rankVenues(query:Query, failover:boolean):Venue[] {
     const fit=Math.max(0,Math.min(100,Math.round((v.base+v.conversation+(v.purpose.includes(query.purpose)?100:55))/3)));
     const budgetScore=Math.max(0,Math.min(100,Math.round(100-Math.max(0,v.price-query.budget)/35-Math.max(0,query.budget-v.price)/180)));
     const operation=Math.max(0,Math.min(100,Math.round((v.access+(v.capacity>=query.people?100:30)+(v.dietary?95:55))/3)));
-    return {...v,score:Math.max(35,Math.min(99,Math.round(score))),reason:`${strengths.slice(0,3).join("・")}。設定した「${priorityLabels[query.priority]}」を重視して評価しました。`,walk:`徒歩${v.minutes}分（デモ）`,availability:v.capacity>=query.people?"空席未確認（デモ）":"人数条件に不一致",breakdown:{fit,budget:budgetScore,operation}};
+    return {...v,score:Math.max(35,Math.min(99,Math.round(score))),reason:`${strengths.slice(0,3).join("・")}。設定した「${priorityLabels[query.priority]}」を重視しています。`,walk:`エリア中心から徒歩約${v.minutes}分`,availability:v.capacity>=query.people?"空席は店舗へ確認":"人数条件に不一致",breakdown:{fit,budget:budgetScore,operation}};
   }).sort((a,b)=>b.score-a.score);
   return scored.slice(0,3);
 }
@@ -278,7 +301,6 @@ function Field({label,children}:{label:string;children:React.ReactNode}){return 
 function MiniStat({label,value}:{label:string;value:string}){return <div><p className="text-[11px] text-[#838a88]">{label}</p><p className="mt-1 text-sm font-semibold">{value}</p></div>}
 function StatusRow({icon:Icon,title,detail,done,active}:{icon:React.ElementType;title:string;detail:string;done?:boolean;active?:boolean}){return <div className={`flex items-center gap-3 rounded-xl p-3 ${active?"bg-[#eef2ed]":""}`}><span className={`grid size-9 place-items-center rounded-xl ${done?"bg-[#dfeae2] text-[#2f6b57]":active?"bg-[#1f4b46] text-white":"bg-[#f1f0eb] text-[#8a918f]"}`}>{done?<Check className="size-4"/>:<Icon className="size-4"/>}</span><div className="min-w-0 flex-1"><p className="text-sm font-semibold">{title}</p><p className="truncate text-xs text-[#7a8380]">{detail}</p></div>{active&&<span className="size-2 rounded-full bg-[#df764a]"/>}</div>}
 function CheckCard({icon:Icon,title,value}:{icon:React.ElementType;title:string;value:string}){return <div className="rounded-2xl border border-[#1e2928]/10 bg-white p-3"><Icon className="size-4 text-[#1f4b46]"/><p className="mt-3 text-xs font-semibold">{title}</p><p className="mt-1 text-[11px] leading-4 text-[#77807e]">{value}</p></div>}
-function AgentAction({text,done,active}:{text:string;done?:boolean;active?:boolean}){return <div className="flex items-center gap-2.5"><span className={`grid size-5 place-items-center rounded-full ${done?"bg-[#d9c9a7] text-[#1f4b46]":active?"bg-[#e17a4e] text-white":"border border-white/25 text-white/40"}`}>{done?<Check className="size-3"/>:<span className="size-1.5 rounded-full bg-current"/>}</span><span className={active?"font-semibold":"text-white/70"}>{text}</span></div>}
 function SettingSwitch({label,description,checked,onCheckedChange}:{label:string;description:string;checked:boolean;onCheckedChange:(v:boolean)=>void}){return <div className="flex items-center justify-between gap-4 rounded-2xl border border-[#1e2928]/10 bg-white p-4"><div><p className="text-sm font-semibold">{label}</p><p className="mt-1 text-xs text-[#77807e]">{description}</p></div><Switch checked={checked} onCheckedChange={onCheckedChange}/></div>}
 function ScorePart({label,value}:{label:string;value:number}){return <div className="text-center"><p className="text-[10px] text-[#7b8381]">{label}</p><p className="mt-1 text-sm font-bold text-[#1f4b46]">{value}</p></div>}
 function escapeIcs(value:string){return value.replace(/\\/g,"\\\\").replace(/,/g,"\\,").replace(/;/g,"\\;").replace(/\n/g,"\\n")}
