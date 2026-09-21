@@ -1,9 +1,9 @@
 export function MapLinks({address}:{address:string}){
   if(!address.trim())return <p className="text-sm text-[#6b635c]">住所を入力すると地図と経路を確認できます。</p>;
   const q=encodeURIComponent(address.trim());
-  return <div className="flex flex-wrap gap-2">
-    <a className="enc-secondary" href={`https://www.google.com/maps/search/?api=1&query=${q}`} target="_blank" rel="noopener noreferrer">Googleマップで開く ↗</a>
-    <a className="enc-secondary" href={`https://maps.apple.com/?q=${q}`} target="_blank" rel="noopener noreferrer">Appleマップで開く ↗</a>
+  return <div className="flex flex-wrap gap-2 [&>a]:whitespace-nowrap">
+    <a className="enc-secondary" href={`https://www.google.com/maps/search/?api=1&query=${q}`} target="_blank" rel="noopener noreferrer">Googleマップ ↗</a>
+    <a className="enc-secondary" href={`https://maps.apple.com/?q=${q}`} target="_blank" rel="noopener noreferrer">Appleマップ ↗</a>
   </div>
 }
 
