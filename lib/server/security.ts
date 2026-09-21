@@ -1,0 +1,25 @@
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { NextResponse, type NextRequest } from 'next/server';
+import { database } from './db';
+export class HttpError extends Error { constructor(public status:number,message:string){super(message)} }
+export const token=()=>randomBytes(32).toString('base64url');
+export const hash=(v:string)=>createHash('sha256').update(v).digest('hex');
+export const equal=(a:string,b:string)=>timingSafeEqual(Buffer.from(hash(a)),Buffer.from(hash(b)));
+export const cookieName=(id:string)=>`encopa_${id}`;
+export function result(data:unknown,status=200){return NextResponse.json(data,{status,headers:{'Cache-Control':'no-store','Referrer-Policy':'no-referrer'}})}
+export function sessionResponse(data:unknown,id:string,secret:string){const r=result(data);r.cookies.set(cookieName(id),secret,{httpOnly:true,secure:process.env.NODE_ENV==='production',sameSite:'strict',path:'/',maxAge:30*86400});return r}
+export function checkOrigin(req:NextRequest){const origin=req.headers.get('origin'); const expected=process.env.APP_ORIGIN||req.nextUrl.origin;if(!origin||origin!==new URL(expected).origin)throw new HttpError(403,'この操作はアプリの画面から行ってください。')}
+export async function readBody(req:NextRequest){
+ checkOrigin(req); if(!req.headers.get('content-type')?.includes('application/json'))throw new HttpError(415,'JSON形式で送信してください。');
+ const reader=req.body?.getReader(); if(!reader)throw new HttpError(400,'入力がありません。');
+ let size=0;const chunks:Uint8Array[]=[];
+ while(true){const part=await reader.read();if(part.done)break;size+=part.value.length;if(size>16384){await reader.cancel();throw new HttpError(413,'入力が長すぎます。')}chunks.push(part.value)}
+ try{const v=JSON.parse(Buffer.concat(chunks).toString('utf8'));if(!v||typeof v!=='object'||Array.isArray(v))throw 0;return v as Record<string,unknown>}catch{throw new HttpError(400,'入力を確認してください。')}
+}
+export async function limit(key:string,max:number,seconds=60){
+ const db=await database(); const bucket=Math.floor(Date.now()/(seconds*1000));
+ const r=await db.execute({sql:'INSERT INTO encopa_limits(key,count,expires_at) VALUES(?,1,?) ON CONFLICT(key) DO UPDATE SET count=count+1 RETURNING count',args:[hash(`${key}:${bucket}`),Date.now()+seconds*2000]});
+ if(Number(r.rows[0].count)>max)throw new HttpError(429,'操作が続いています。少し待ってから再度お試しください。');
+}
+export async function failure(run:()=>Promise<NextResponse>){try{return await run()}catch(e){if(e instanceof HttpError)return result({error:e.message},e.status);if(e instanceof Error&&e.message==='DB_NOT_CONFIGURED')return result({error:'共有機能の接続設定が必要です。管理者にお問い合わせください。'},503);console.error('[encopa] request failed',e instanceof Error?e.name:'unknown');return result({error:'保存できませんでした。少し待って再度お試しください。'},503)}}
+export function short(value:unknown,max:number,label:string,required=true){if(typeof value!=='string'||value.trim().length>max||(required&&!value.trim()))throw new HttpError(400,`${label}を確認してください。`);return value.trim()}
