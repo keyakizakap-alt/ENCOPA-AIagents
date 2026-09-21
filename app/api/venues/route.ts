@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import type { VenueSearchResponse, VenueSearchResult } from "@/lib/venue-types";
+import { prefectureByCode } from "@/lib/prefectures";
 import { HttpError, limit, readBody, short } from "@/lib/server/security";
 
 export const runtime = "nodejs";
@@ -41,7 +42,8 @@ type Priority = "balance" | "conversation" | "cost" | "access";
 export async function POST(request: NextRequest) {
   try {
     const body = await readBody(request);
-    const area = short(body.area, 80, "エリア");
+    const prefecture = prefectureByCode(body.prefectureCode);
+    if (!prefecture) throw new HttpError(400, "都道府県を選択してください。");
     const purpose = short(body.purpose, 40, "目的");
     const budget = boundedNumber(body.budget, 1000, 30000, "予算");
     const people = boundedNumber(body.people, 2, 200, "人数");
@@ -56,7 +58,7 @@ export async function POST(request: NextRequest) {
 
     const params = new URLSearchParams({
       key: apiKey,
-      keyword: area,
+      large_area: prefecture.code,
       party_capacity: String(people),
       count: "30",
       order: "4",
@@ -74,9 +76,22 @@ export async function POST(request: NextRequest) {
     } finally {
       clearTimeout(timeout);
     }
-    if (!response.ok) throw new HttpError(502, "店舗情報を取得できませんでした。少し待って再度お試しください。");
+    if (response.status === 401 || response.status === 403) {
+      console.error("[encopa] venue provider authentication rejected", response.status);
+      throw new HttpError(503, "店舗検索の接続設定を確認しています。しばらくしてからお試しください。");
+    }
+    if (response.status === 429) throw new HttpError(429, "検索が集中しています。少し待ってからお試しください。");
+    if (!response.ok) {
+      console.error("[encopa] venue provider HTTP error", response.status);
+      throw new HttpError(502, "店舗検索サービスが一時的に利用できません。少し待って再度お試しください。");
+    }
     const payload = await response.json() as HotPepperPayload;
-    if (payload.results?.error?.length) throw new HttpError(502, "店舗検索サービスへ接続できませんでした。少し待って再度お試しください。");
+    if (payload.results?.error?.length) {
+      const providerMessage = payload.results.error.map((item) => item.message || "").join(" ");
+      console.error("[encopa] venue provider API error", providerErrorKind(providerMessage));
+      if (/key|キー|認証|authorization/i.test(providerMessage)) throw new HttpError(503, "店舗検索の接続設定を確認しています。しばらくしてからお試しください。");
+      throw new HttpError(502, "店舗検索サービスが一時的に利用できません。少し待って再度お試しください。");
+    }
 
     const venues = (payload.results?.shop ?? [])
       .map((shop) => normalize(shop, { purpose, budget, people, priority, privateRoom, dietary }))
@@ -93,9 +108,16 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(data, { headers: { "Cache-Control": "private, no-store", "Referrer-Policy": "no-referrer" } });
   } catch (error) {
     if (error instanceof HttpError) return NextResponse.json({ error: error.message }, { status: error.status, headers: { "Cache-Control": "no-store" } });
+    if (error instanceof Error && error.name === "AbortError") return NextResponse.json({ error: "店舗検索に時間がかかっています。少し待って再度お試しください。" }, { status: 504, headers: { "Cache-Control": "no-store" } });
     console.error("[encopa] venue search failed", error instanceof Error ? error.name : "unknown");
     return NextResponse.json({ error: "店舗情報を取得できませんでした。少し待って再度お試しください。" }, { status: 503, headers: { "Cache-Control": "no-store" } });
   }
+}
+
+function providerErrorKind(message: string) {
+  if (/key|キー|認証|authorization/i.test(message)) return "authentication";
+  if (/limit|回数|上限|too many/i.test(message)) return "rate_limit";
+  return "provider_error";
 }
 
 function normalize(shop: HotPepperShop, query: { purpose: string; budget: number; people: number; priority: Priority; privateRoom: boolean; dietary: boolean }): VenueSearchResult | null {

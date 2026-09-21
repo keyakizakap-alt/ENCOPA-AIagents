@@ -9,6 +9,7 @@ import { MapLinks, VenueMap } from "@/components/encopa/maps";
 import { EMPTY_ALLERGY, type AllergyProfile } from "@/lib/group-types";
 import type { AgentPlan, AgentPlanResponse } from "@/lib/agent-types";
 import type { VenueSearchResponse, VenueSearchResult } from "@/lib/venue-types";
+import { PREFECTURE_REGIONS, prefectureByCode, prefectureFromLabel } from "@/lib/prefectures";
 import {
   ArrowRight, CalendarDays, Check, ChevronRight, CircleCheck, Clock3, Copy, Download, ExternalLink,
   MapPin, RefreshCw, Search, Settings2, Share2, ShieldCheck, Sparkles,
@@ -24,7 +25,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 
 type Priority = "balance" | "conversation" | "cost" | "access";
-type Query = { purpose:string; area:string; budget:number; people:number; priority:Priority; privateRoom:boolean; dietary:boolean };
+type Query = { purpose:string; area:string; prefectureCode:string; budget:number; people:number; priority:Priority; privateRoom:boolean; dietary:boolean };
 type Stage = "draft" | "ranked" | "collecting" | "awaiting_approval" | "scheduled";
 type AuditEvent = { id:string; label:string; detail:string };
 
@@ -35,7 +36,8 @@ export default function Home() {
   const [allergy,setAllergy]=useState<AllergyProfile>(EMPTY_ALLERGY);
   const [searchError,setSearchError]=useState("");
   const [purpose,setPurpose]=useState("忘年会");
-  const [area,setArea]=useState("長崎駅周辺");
+  const [area,setArea]=useState("長崎県");
+  const [prefectureCode,setPrefectureCode]=useState("Z093");
   const [budget,setBudget]=useState("5500");
   const [people,setPeople]=useState("18");
   const [priority,setPriority]=useState<Priority>("balance");
@@ -48,7 +50,7 @@ export default function Home() {
   const [eventTime,setEventTime]=useState("19:00");
   const [draftEventDate,setDraftEventDate]=useState("2026-12-18");
   const [draftEventTime,setDraftEventTime]=useState("19:00");
-  const [query,setQuery]=useState<Query>({purpose:"忘年会",area:"長崎駅周辺",budget:5500,people:18,priority:"balance",privateRoom:true,dietary:true});
+  const [query,setQuery]=useState<Query>({purpose:"忘年会",area:"長崎県",prefectureCode:"Z093",budget:5500,people:18,priority:"balance",privateRoom:true,dietary:true});
   const [searched,setSearched]=useState(false);
   const [searching,setSearching]=useState(false);
   const [venues,setVenues]=useState<VenueSearchResult[]>([]);
@@ -61,6 +63,7 @@ export default function Home() {
   const [approvalOpen,setApprovalOpen]=useState(false);
   const [settingsOpen,setSettingsOpen]=useState(false);
   const [allergyOpen,setAllergyOpen]=useState(false);
+  const [locationOpen,setLocationOpen]=useState(false);
   const [shareStatus,setShareStatus]=useState("");
   const [completed,setCompleted]=useState(false);
   const [failover,setFailover]=useState(false);
@@ -78,7 +81,7 @@ export default function Home() {
 
   const search = async (override?:Partial<Query>) => {
     const next:Query={
-      purpose, area:area.trim()||"現在地周辺", budget:Math.max(1000,Number(budget)||5500),
+      purpose, area, prefectureCode, budget:Math.max(1000,Number(budget)||5500),
       people:Math.max(2,Number(people)||2), priority, privateRoom, dietary:dietary||hasAllergy, ...override,
     };
     if(next.budget>30000||next.people>200){setSearchError("予算は30000円以下、人数は200名以下で入力してください。");return;}
@@ -91,7 +94,7 @@ export default function Home() {
       if(!response.ok)throw new Error(data.error||"店舗を検索できませんでした。");
       const nextVenues=Array.isArray(data.venues)?data.venues:[];
       setVenues(nextVenues);setProviderTotal(Number(data.total||nextVenues.length));setFetchedAt(Number(data.fetchedAt||Date.now()));
-      if(!nextVenues.length)setSearchError("条件に合う店舗が見つかりませんでした。エリア名を駅名や市区町村名に変えてお試しください。");
+      if(!nextVenues.length)setSearchError("条件に合う店舗が見つかりませんでした。人数や予算、個室条件を変えてお試しください。");
       addAudit("実店舗を検索",`${next.area}で${nextVenues.length}件の候補を表示`);
       if(nextVenues.length){
         setAgentStatus("running");
@@ -169,7 +172,7 @@ export default function Home() {
         const value=JSON.parse(saved);
         // Restore the browser-owned draft once after hydration.
         // eslint-disable-next-line react-hooks/set-state-in-effect
-        if(value.query){setQuery(value.query);setPurpose(value.query.purpose);setArea(value.query.area);setBudget(String(value.query.budget));setPeople(String(value.query.people));setPriority(value.query.priority);setPrivateRoom(value.query.privateRoom);setDietary(value.query.dietary)}
+        if(value.query){const restoredPrefecture=prefectureByCode(value.query.prefectureCode)||prefectureFromLabel(value.query.area)||prefectureByCode("Z093")!;const restoredQuery={...value.query,area:restoredPrefecture.name,prefectureCode:restoredPrefecture.code};setQuery(restoredQuery);setPurpose(restoredQuery.purpose);setArea(restoredPrefecture.name);setPrefectureCode(restoredPrefecture.code);setBudget(String(restoredQuery.budget));setPeople(String(restoredQuery.people));setPriority(restoredQuery.priority);setPrivateRoom(restoredQuery.privateRoom);setDietary(restoredQuery.dietary)}
         if(Array.isArray(value.venues)&&Date.now()-Number(value.fetchedAt)<23*60*60*1000){setVenues(value.venues);setFetchedAt(Number(value.fetchedAt));setProviderTotal(Number(value.providerTotal||value.venues.length));setSearched(true)}
         if(value.stage){setStage(value.stage);setCompleted(value.stage==="collecting"||value.stage==="awaiting_approval"||value.stage==="scheduled")}
         if(Array.isArray(value.audit))setAudit(value.audit);
@@ -196,7 +199,7 @@ export default function Home() {
         description:"目的・エリア・予算・人数を反映し、候補を並べ直します。",
         inputSchema:{type:"object",properties:{purpose:{type:"string"},area:{type:"string"},budget:{type:"integer",minimum:1000},people:{type:"integer",minimum:2}},required:["purpose","area","budget","people"],additionalProperties:false},
         annotations:{readOnlyHint:false,untrustedContentHint:false},
-        execute:async(input:unknown)=>{const v=input as {purpose:string;area:string;budget:number;people:number};setPurpose(v.purpose);setArea(v.area);setBudget(String(v.budget));setPeople(String(v.people));await search(v);return{status:"ranked",reservation_created:false}}
+        execute:async(input:unknown)=>{const v=input as {purpose:string;area:string;budget:number;people:number};const nextPrefecture=prefectureFromLabel(v.area);if(!nextPrefecture)throw new Error("47都道府県のいずれかを指定してください。");setPurpose(v.purpose);setArea(nextPrefecture.name);setPrefectureCode(nextPrefecture.code);setBudget(String(v.budget));setPeople(String(v.people));await search({...v,area:nextPrefecture.name,prefectureCode:nextPrefecture.code});return{status:"ranked",reservation_created:false}}
       },{signal:lifecycle.signal}),
       context.registerTool({
         name:"start_participant_confirmation",title:"参加者確認を開始",
@@ -232,7 +235,7 @@ export default function Home() {
           </div>
           <div className="grid gap-3 border-t border-white/10 bg-[#163d39] p-4 sm:grid-cols-2 sm:p-5 xl:grid-cols-[.9fr_1.15fr_.68fr_.56fr_.85fr_auto]">
             <Field label="目的"><Select value={purpose} onValueChange={setPurpose}><SelectTrigger className="h-12 w-full rounded-xl border-white/10 bg-white text-[#1e2928]"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="忘年会">忘年会</SelectItem><SelectItem value="新年会">新年会</SelectItem><SelectItem value="歓迎会">歓迎会</SelectItem><SelectItem value="送別会">送別会</SelectItem><SelectItem value="懇親会">懇親会</SelectItem><SelectItem value="打ち上げ">打ち上げ</SelectItem></SelectContent></Select></Field>
-            <Field label="エリア"><div className="relative"><MapPin className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[#7d8986]"/><Input value={area} onChange={e=>setArea(e.target.value)} className="h-12 rounded-xl border-white/10 bg-white pl-9 text-base"/></div></Field>
+            <Field label="場所"><button type="button" onClick={()=>setLocationOpen(true)} className="flex h-12 w-full items-center justify-between rounded-xl border border-white/10 bg-white px-3 text-left text-[#1e2928] transition hover:bg-[#f7f5ef]"><span className="flex min-w-0 items-center gap-2"><MapPin className="size-4 shrink-0 text-[#7d8986]"/><span className="truncate text-base font-medium">{area}</span></span><ChevronRight className="size-4 shrink-0 text-[#7d8986]"/></button></Field>
             <Field label="予算 / 人"><div className="relative"><Input inputMode="numeric" value={budget} onChange={e=>setBudget(e.target.value.replace(/\D/g,""))} className="h-12 rounded-xl border-white/10 bg-white pr-9 text-base"/><span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-[#7d8986]">円</span></div></Field>
             <Field label="人数"><div className="relative"><Input inputMode="numeric" value={people} onChange={e=>setPeople(e.target.value.replace(/\D/g,""))} className="h-12 rounded-xl border-white/10 bg-white pr-9 text-base"/><span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-[#7d8986]">名</span></div></Field>
             <Field label="アレルギー"><button type="button" onClick={()=>setAllergyOpen(true)} className="flex h-12 w-full items-center justify-between rounded-xl border border-white/10 bg-white px-3 text-left text-sm font-medium text-[#1e2928] transition hover:bg-[#f7f5ef]"><span className="truncate">{hasAllergy?`${allergy.items.length}項目を設定`:allergy.status==="none"?"なし":"設定する"}</span><ChevronRight className="size-4 text-[#7d8986]"/></button></Field>
@@ -244,7 +247,7 @@ export default function Home() {
           {searchError&&<p role="alert" className="mb-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{searchError}</p>}
           {allergy.status==='selected'&&<p className="mb-4 rounded-xl bg-[#eee6d7] p-4 text-sm"><span className="font-semibold">店舗へ確認する食材：</span>{allergy.items.join('、')||'選択してください'}。予約前に、調理時の混入を含めて店舗へご確認ください。</p>}
           <div className="mb-4 flex flex-col justify-between gap-3 sm:flex-row sm:items-end"><div><p className="text-[12px] font-semibold tracking-[.12em] text-[#aa5a3d]">RESTAURANTS · {query.area}</p><h2 className="mt-1 font-serif text-3xl font-semibold tracking-tight">{searched?candidates.length?`${query.purpose}に合う実店舗 ${candidates.length}件`:"検索結果":"条件を入力して実店舗を検索"}</h2></div><p className="max-w-md text-sm leading-6 text-[#6e7774]">予算、人数、個室などの条件から実在する店舗を比較します。空席とアレルギー対応は予約前に店舗へ確認してください。</p></div>
-          {!searched&&<div className="grid min-h-56 place-items-center rounded-[24px] border border-dashed border-[#1e2928]/20 bg-white px-6 text-center"><div><Search className="mx-auto size-8 text-[#1f4b46]"/><p className="mt-4 font-semibold">エリアを入力して「実店舗を検索」を押してください</p><p className="mt-2 text-sm text-[#687370]">例：長崎駅、思案橋、浜町</p></div></div>}
+          {!searched&&<div className="grid min-h-56 place-items-center rounded-[24px] border border-dashed border-[#1e2928]/20 bg-white px-6 text-center"><div><Search className="mx-auto size-8 text-[#1f4b46]"/><p className="mt-4 font-semibold">都道府県を選んで「実店舗を検索」を押してください</p><p className="mt-2 text-sm text-[#687370]">全国47都道府県から選択できます</p></div></div>}
           {failover&&candidates.length>1&&<div className="mb-4 flex items-start gap-3 rounded-2xl border border-[#d78a66]/30 bg-[#fff3eb] p-4 text-sm text-[#7c4631]"><RefreshCw className="mt-0.5 size-4 shrink-0"/><div><p className="font-semibold">次の候補を先頭に表示しました</p><p className="mt-1 text-xs">検索条件は変えずに、別の店舗を比較できます。</p></div></div>}
           {candidates.length>0&&<div className="grid gap-4 xl:grid-cols-3">
             {candidates.map((v,i)=><button key={v.id} onClick={()=>{setSelected(i);setCompleted(false);setStage("ranked")}} className={`group overflow-hidden rounded-[22px] border bg-white text-left transition duration-300 hover:-translate-y-1 hover:shadow-xl ${selected===i?"border-[#1f4b46] ring-2 ring-[#1f4b46]/12":"border-[#1e2928]/10"}`}>
@@ -254,7 +257,7 @@ export default function Home() {
           </div>}
           <AgentInsight status={agentStatus} plan={agentPlan} error={agentError}/>
           {searched&&<div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-xs text-[#687370]"><span>{providerTotal.toLocaleString()}件から条件の近い店舗を表示</span><a href="https://www.hotpepper.jp/" target="_blank" rel="noopener noreferrer" className="font-semibold text-[#1f4b46] underline-offset-4 hover:underline">店舗情報提供：ホットペッパー グルメ</a></div>}
-          {chosen&&<><div className="mt-5 grid gap-5 rounded-[24px] border border-[#1e2928]/10 bg-white p-5 shadow-sm sm:p-6 lg:grid-cols-[.9fr_1.1fr]"><div><p className="text-xs font-semibold tracking-[.1em] text-[#aa5a3d]">場所を確認</p><h3 className="mt-1 text-xl font-semibold">{chosen.name}</h3><p className="mt-4 text-sm leading-6 text-[#687370]">{chosen.address}</p><p className="mt-2 text-sm leading-6 text-[#687370]">{chosen.access}</p><div className="mt-4"><MapLinks address={chosen.address}/></div><a href={chosen.url} target="_blank" rel="noopener noreferrer" className="mt-3 inline-flex min-h-11 items-center gap-2 text-sm font-semibold text-[#1f4b46] underline-offset-4 hover:underline">店舗ページで詳細・空席を確認<ExternalLink className="size-4"/></a></div><VenueMap address={chosen.address} label={chosen.name}/></div>
+          {chosen&&<><div className="mt-5 grid gap-5 rounded-[24px] border border-[#1e2928]/10 bg-white p-5 shadow-sm sm:p-6 lg:grid-cols-[.9fr_1.1fr]"><div><p className="text-xs font-semibold tracking-[.1em] text-[#aa5a3d]">店舗の場所</p><h3 className="mt-1 text-xl font-semibold">{chosen.name}</h3><div className="mt-4 rounded-2xl bg-[#f7f5ef] p-4"><p className="text-xs font-semibold text-[#7a8380]">住所</p><p className="mt-1 text-sm leading-6 text-[#44504d]">{chosen.address}</p><p className="mt-3 text-xs font-semibold text-[#7a8380]">アクセス</p><p className="mt-1 text-sm leading-6 text-[#44504d]">{chosen.access}</p></div><div className="mt-4"><MapLinks address={chosen.address}/></div><a href={chosen.url} target="_blank" rel="noopener noreferrer" className="mt-4 inline-flex min-h-11 items-center gap-2 text-sm font-semibold text-[#1f4b46] underline-offset-4 hover:underline">店舗ページで詳細・空席を確認<ExternalLink className="size-4"/></a></div><VenueMap address={chosen.address} label={chosen.name}/></div>
           <CreateGroup title={`${query.purpose}のグループ`} initial={{venueName:chosen.name,address:chosen.address,date:eventDate,time:eventTime,people:query.people,price:chosen.estimatedPrice||query.budget,status:"planning",bookingReference:"",note:"",website:chosen.url}}/>
           <div className="mt-5 grid gap-4 rounded-[24px] border border-[#1e2928]/10 bg-white p-5 shadow-sm sm:p-6 xl:grid-cols-[1.1fr_.9fr_auto] xl:items-center"><div className="flex items-center gap-2"><span className="grid size-9 place-items-center rounded-xl bg-[#e8eee9] text-[#1f4b46]"><Users className="size-4"/></span><div><p className="text-sm font-semibold">プランを確定して共有</p><p className="text-xs text-[#7b8381]">参加者用グループとカレンダー予定をまとめて準備できます</p></div></div><div className="grid grid-cols-3 gap-3 text-center"><MiniStat label="参加予定" value={`${query.people}名`}/><MiniStat label="予算目安" value={chosen.budgetLabel}/><MiniStat label="候補順位" value={`${selected+1}位`}/></div><Button onClick={()=>setApprovalOpen(true)} className="h-12 rounded-xl bg-[#1f4b46] px-6 text-white hover:bg-[#163d39]">予定を確認する<ArrowRight className="ml-2 size-4"/></Button></div></>}
         </section>
@@ -272,6 +275,8 @@ export default function Home() {
         <div className="mt-4 rounded-[24px] border border-[#1e2928]/10 bg-white p-5"><div className="flex items-center justify-between"><div><p className="text-xs font-semibold tracking-[.09em] text-[#a85b40]">最近の更新</p><h2 className="mt-1 text-lg font-semibold">プランの履歴</h2></div><Badge variant="outline" className="bg-[#f7f5ef]">この端末</Badge></div><div className="mt-4 space-y-3">{audit.slice(0,4).map((item,index)=><div key={item.id} className="flex gap-3"><span className={`mt-1.5 size-2 shrink-0 rounded-full ${index===0?"bg-[#e17a4e]":"bg-[#c7cbc7]"}`}/><div><p className="text-sm font-semibold">{item.label}</p><p className="mt-0.5 text-xs leading-5 text-[#77807e]">{item.detail}</p></div></div>)}</div></div>
       </aside>
     </section>
+
+    <Dialog open={locationOpen} onOpenChange={setLocationOpen}><DialogContent className="max-h-[90vh] overflow-y-auto rounded-[24px] bg-[#fbfaf6] sm:max-w-[720px]"><DialogHeader><DialogTitle className="font-serif text-2xl">場所を選ぶ</DialogTitle><DialogDescription>検索したい都道府県を選択してください。全国47都道府県に対応しています。</DialogDescription></DialogHeader><div className="space-y-5 py-2">{PREFECTURE_REGIONS.map(region=><section key={region.name} aria-labelledby={`region-${region.name}`}><h3 id={`region-${region.name}`} className="mb-2 text-sm font-semibold text-[#59635f]">{region.name}</h3><div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">{region.prefectures.map(prefecture=>{const active=prefecture.code===prefectureCode;return <button key={prefecture.code} type="button" aria-pressed={active} onClick={()=>{setPrefectureCode(prefecture.code);setArea(prefecture.name);setLocationOpen(false)}} className={`flex min-h-11 items-center justify-between rounded-xl border px-3 text-left text-sm font-medium transition ${active?"border-[#1f4b46] bg-[#1f4b46] text-white shadow-sm":"border-[#1e2928]/10 bg-white text-[#283330] hover:border-[#1f4b46]/40 hover:bg-[#f3f1ea]"}`}><span>{prefecture.name}</span>{active&&<Check className="size-4"/>}</button>})}</div></section>)}</div><DialogFooter><Button variant="outline" onClick={()=>setLocationOpen(false)}>閉じる</Button></DialogFooter></DialogContent></Dialog>
 
     <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}><DialogContent className="max-h-[90vh] overflow-y-auto rounded-[24px] bg-[#fbfaf6] sm:max-w-[560px]"><DialogHeader><DialogTitle className="font-serif text-2xl">プランの詳細設定</DialogTitle><DialogDescription>日時や候補選びの優先条件を変更できます。</DialogDescription></DialogHeader><div className="space-y-5 py-2"><div className="grid grid-cols-2 gap-3"><div><Label className="mb-2 block">開催日</Label><Input type="date" value={draftEventDate} onChange={e=>setDraftEventDate(e.target.value)} className="h-11 bg-white"/></div><div><Label className="mb-2 block">開始時刻</Label><Input type="time" value={draftEventTime} onChange={e=>setDraftEventTime(e.target.value)} className="h-11 bg-white"/></div></div><div><Label className="mb-2 block">候補選びで優先すること</Label><Select value={draftPriority} onValueChange={v=>setDraftPriority(v as Priority)}><SelectTrigger className="h-11 w-full bg-white"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="balance">バランス</SelectItem><SelectItem value="conversation">会話しやすさ</SelectItem><SelectItem value="cost">予算の収まり</SelectItem><SelectItem value="access">アクセス情報</SelectItem></SelectContent></Select></div><SettingSwitch label="個室・半個室を優先" description="会話のしやすさを候補選びに加えます" checked={draftPrivateRoom} onCheckedChange={setDraftPrivateRoom}/><SettingSwitch label="食事制限の確認を追加" description="候補ごとに、予約前の店舗確認を案内します" checked={draftDietary} onCheckedChange={setDraftDietary}/><button type="button" onClick={()=>{setSettingsOpen(false);setAllergyOpen(true)}} className="flex min-h-14 w-full items-center justify-between rounded-2xl border border-[#1e2928]/10 bg-white px-4 text-left"><div><p className="text-sm font-semibold">食物アレルギー</p><p className="mt-1 text-xs text-[#77807e]">{hasAllergy?`${allergy.items.join("、")}を確認`:allergy.status==="none"?"なし":"未設定"}</p></div><ChevronRight className="size-4 text-[#77807e]"/></button></div><DialogFooter><Button variant="outline" onClick={()=>setSettingsOpen(false)}>変更しない</Button><Button onClick={applySettings} className="bg-[#1f4b46] text-white hover:bg-[#163d39]">保存して候補を更新</Button></DialogFooter></DialogContent></Dialog>
 

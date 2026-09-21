@@ -7,8 +7,9 @@ const booking={venueName:'テスト会場（架空）',address:'東京都千代�
 async function call(path,body,cookie,origin=base){const r=await fetch(`${base}${path}`,{method:body?'POST':'GET',headers:{...(body?{'Content-Type':'application/json','Origin':origin}:{}),...(cookie?{Cookie:cookie}:{})},body:body?JSON.stringify(body):undefined});return {status:r.status,body:await r.json(),cookie:r.headers.get('set-cookie')?.split(';')[0]};}
 async function orcaCount(){const r=await fetch('http://127.0.0.1:3011/count');return (await r.json()).count;}
 test('venue search validates input and keeps the provider key server-side',async()=>{
- const invalid=await call('/api/venues',{purpose:'会食',area:'長崎駅',budget:999,people:4,priority:'balance',privateRoom:false,dietary:false});assert.equal(invalid.status,400);
- const unavailable=await call('/api/venues',{purpose:'会食',area:'長崎駅',budget:5000,people:4,priority:'balance',privateRoom:false,dietary:false});assert.equal(unavailable.status,503);assert.match(unavailable.body.error,/設定/);
+ const invalidPrefecture=await call('/api/venues',{purpose:'会食',area:'長崎県',prefectureCode:'invalid',budget:5000,people:4,priority:'balance',privateRoom:false,dietary:false});assert.equal(invalidPrefecture.status,400);assert.match(invalidPrefecture.body.error,/都道府県/);
+ const invalid=await call('/api/venues',{purpose:'会食',area:'長崎県',prefectureCode:'Z093',budget:999,people:4,priority:'balance',privateRoom:false,dietary:false});assert.equal(invalid.status,400);
+ const unavailable=await call('/api/venues',{purpose:'会食',area:'長崎県',prefectureCode:'Z093',budget:5000,people:4,priority:'balance',privateRoom:false,dietary:false});assert.equal(unavailable.status,503);assert.match(unavailable.body.error,/設定/);
 });
 test('agent workflow orchestrates specialists through OrcaRouter',async()=>{
  const candidate={id:'shop-1',name:'テスト店舗',genre:'和食',address:'長崎県長崎市',access:'長崎駅から徒歩5分',budgetLabel:'5000円',estimatedPrice:5000,partyCapacity:20,privateRoom:true,freeDrink:true,course:true,nonSmoking:'全面禁煙',openingHours:'17:00〜23:00',closed:'なし',score:88};
