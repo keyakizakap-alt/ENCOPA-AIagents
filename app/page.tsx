@@ -230,7 +230,7 @@ export default function Home() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[chosen?.name]);
 
-  return <main className="min-h-screen bg-[#f7f5ef] pb-24 text-[#1e2928] xl:pb-0">
+  return <main className="min-h-screen bg-[#f7f5ef] pb-24 text-[#1e2928] 2xl:pb-0">
     <header className="sticky top-0 z-40 border-b border-[#1e2928]/10 bg-[#f7f5ef]/92 backdrop-blur-xl">
       <div className="mx-auto flex h-16 max-w-[1600px] items-center justify-between px-4 sm:px-7 lg:px-10">
         <div className="flex items-center gap-3"><div className="grid size-9 place-items-center rounded-[12px] bg-[#1f4b46] text-[#fffaf1]"><UtensilsCrossed className="size-[18px]"/></div><div><p className="text-[20px] font-black tracking-[.08em]">ENCOPA <span className="font-sans text-xs font-semibold tracking-normal text-[#687371]">エンコパ</span></p><p className="hidden text-[11px] text-[#687371] sm:block">決めるところから、予定に入るまで。</p></div></div>
@@ -238,7 +238,7 @@ export default function Home() {
       </div>
     </header>
 
-    <section className="mx-auto grid max-w-[1600px] gap-6 px-4 py-5 sm:px-7 lg:grid-cols-[minmax(0,1fr)_340px] lg:px-10 lg:py-8 xl:grid-cols-[220px_minmax(0,1fr)_340px]">
+    <section className="mx-auto grid max-w-[1600px] gap-6 px-4 py-5 sm:px-7 lg:grid-cols-[minmax(0,1fr)_340px] lg:px-10 lg:py-8 2xl:grid-cols-[220px_minmax(0,1fr)_340px]">
       <DesktopNavigation stage={stage} candidateCount={candidates.length}/>
       <div id="home" className="min-w-0 scroll-mt-24">
         <PlanOverview title={`${purpose}${eventDate.slice(0,4)}`} eventDate={eventDate} eventTime={eventTime} people={query.people} budget={query.budget} area={query.area} stage={stage} candidateCount={candidates.length} hasAllergy={hasAllergy}/>
@@ -247,17 +247,17 @@ export default function Home() {
         </div>
 
         <div className="overflow-hidden rounded-[28px] border border-[#1e2928]/10 bg-[#1f4b46] shadow-[0_18px_60px_rgba(31,75,70,.14)]">
-          <div className="grid gap-7 p-5 sm:p-7 xl:grid-cols-[1fr_280px] xl:p-9">
-            <div><div className="mb-5 flex items-center gap-2 text-[#d9c9a7]"><Sparkles className="size-4"/><span className="text-[13px] font-semibold tracking-[.08em]">集まる日の準備を、ひとつに</span></div><h1 className="max-w-[680px] font-serif text-[clamp(2rem,4.2vw,4.2rem)] leading-[1.04] tracking-[-.045em] text-[#fffaf1]">条件を変えるたび、<br className="hidden sm:block"/>候補と理由を組み直します。</h1><p className="mt-4 max-w-2xl text-[15px] leading-7 text-[#e5e8df]/75">候補を比べて、予約内容をみんなで共有。アレルギーの確認も、待ち合わせの連絡も、この会のグループで。</p></div>
+          <div className="grid gap-7 p-5 sm:p-7 2xl:grid-cols-[minmax(0,1fr)_260px] xl:p-9">
+            <div><div className="mb-5 flex items-center gap-2 text-[#d9c9a7]"><Sparkles className="size-4"/><span className="text-[13px] font-semibold tracking-[.08em]">集まる日の準備を、ひとつに</span></div><h1 className="max-w-[680px] font-serif text-[clamp(2rem,3vw,3.4rem)] leading-[1.04] tracking-[-.045em] text-[#fffaf1]">条件を変えるたび、<br className="hidden sm:block"/>候補と理由を組み直します。</h1><p className="mt-4 max-w-2xl text-[15px] leading-7 text-[#e5e8df]/75">候補を比べて、予約内容をみんなで共有。アレルギーの確認も、待ち合わせの連絡も、この会のグループで。</p></div>
             <div className="rounded-[22px] border border-white/12 bg-white/[.07] p-5 text-[#fffaf1]"><p className="text-xs text-white/55">予算の目安</p><p className="mt-2 text-3xl font-semibold tracking-tight">{total.toLocaleString()}円</p><div className="mt-5 space-y-3 text-sm"><div className="flex justify-between"><span className="text-white/55">開催</span><span>{eventDate.slice(5).replace("-","/")} {eventTime}</span></div><div className="flex justify-between"><span className="text-white/55">優先</span><span>{priorityLabels[priority]}</span></div><div className="flex justify-between"><span className="text-white/55">アレルギー</span><span>{hasAllergy?`${allergy.items.length}項目を確認`:allergy.status==="none"?"なし":"未設定"}</span></div><div className="border-t border-white/10 pt-3 text-[12px] leading-5 text-white/65">選んだ条件とプランは、いつでも参加者へ共有できます。</div></div></div>
           </div>
-          <div className="grid gap-3 border-t border-white/10 bg-[#163d39] p-4 sm:grid-cols-2 sm:p-5 xl:grid-cols-[.9fr_1.15fr_.68fr_.56fr_.85fr_auto]">
+          <div className="grid gap-3 border-t border-white/10 bg-[#163d39] p-4 sm:grid-cols-2 sm:p-5 xl:grid-cols-3">
             <Field label="目的"><Select value={purpose} onValueChange={setPurpose}><SelectTrigger className="h-12 w-full rounded-xl border-white/10 bg-white text-[#1e2928]"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="忘年会">忘年会</SelectItem><SelectItem value="新年会">新年会</SelectItem><SelectItem value="歓迎会">歓迎会</SelectItem><SelectItem value="送別会">送別会</SelectItem><SelectItem value="懇親会">懇親会</SelectItem><SelectItem value="打ち上げ">打ち上げ</SelectItem></SelectContent></Select></Field>
             <Field label="場所"><button type="button" onClick={()=>setLocationOpen(true)} className="flex h-12 w-full items-center justify-between rounded-xl border border-white/10 bg-white px-3 text-left text-[#1e2928] transition hover:bg-[#f7f5ef]"><span className="flex min-w-0 items-center gap-2"><MapPin className="size-4 shrink-0 text-[#7d8986]"/><span className="truncate text-base font-medium">{area}</span></span><ChevronRight className="size-4 shrink-0 text-[#7d8986]"/></button></Field>
             <Field label="予算 / 人"><div className="relative"><Input inputMode="numeric" value={budget} onChange={e=>setBudget(e.target.value.replace(/\D/g,""))} className="h-12 rounded-xl border-white/10 bg-white pr-9 text-base"/><span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-[#7d8986]">円</span></div></Field>
             <Field label="人数"><div className="relative"><Input inputMode="numeric" value={people} onChange={e=>setPeople(e.target.value.replace(/\D/g,""))} className="h-12 rounded-xl border-white/10 bg-white pr-9 text-base"/><span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-[#7d8986]">名</span></div></Field>
             <Field label="アレルギー"><button type="button" onClick={()=>setAllergyOpen(true)} className="flex h-12 w-full items-center justify-between rounded-xl border border-white/10 bg-white px-3 text-left text-sm font-medium text-[#1e2928] transition hover:bg-[#f7f5ef]"><span className="truncate">{hasAllergy?`${allergy.items.length}項目を設定`:allergy.status==="none"?"なし":"設定する"}</span><ChevronRight className="size-4 text-[#7d8986]"/></button></Field>
-            <div className="flex items-end"><Button disabled={searching} onClick={()=>void search()} className="h-12 w-full rounded-xl bg-[#e17a4e] px-6 text-base font-semibold text-white shadow-lg hover:bg-[#ee8a5e] xl:w-auto">{searching?<RefreshCw className="mr-2 size-4 animate-spin"/>:<Search className="mr-2 size-4"/>}{searching?"検索中":"実店舗を検索"}</Button></div>
+            <div className="flex items-end"><Button disabled={searching} onClick={()=>void search()} className="h-12 w-full rounded-xl bg-[#e17a4e] px-6 text-base font-semibold text-white shadow-lg hover:bg-[#ee8a5e]">{searching?<RefreshCw className="mr-2 size-4 animate-spin"/>:<Search className="mr-2 size-4"/>}{searching?"検索中":"実店舗を検索"}</Button></div>
           </div>
         </div>
 
