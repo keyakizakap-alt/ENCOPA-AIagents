@@ -68,6 +68,7 @@ export default function Home() {
   const [agentStatus,setAgentStatus]=useState<"idle"|"running"|"ready"|"error">("idle");
   const [agentPlan,setAgentPlan]=useState<AgentPlan|null>(null);
   const [agentError,setAgentError]=useState("");
+  const [agentFailure,setAgentFailure]=useState<{reason?:string;traceId?:string}|null>(null);
   const [providerTotal,setProviderTotal]=useState(0);
   const [fetchedAt,setFetchedAt]=useState(0);
   const [stale,setStale]=useState(false);
@@ -106,7 +107,7 @@ export default function Home() {
     };
     if(next.budget>30000||next.people>200){setSearchError("予算は30000円以下、人数は200名以下で入力してください。");return;}
     setSearchError("");
-    setSearching(true); setCompleted(false); setFailover(false); setSelected(0); setAgentStatus("idle"); setAgentPlan(null); setAgentError("");
+    setSearching(true); setCompleted(false); setFailover(false); setSelected(0); setAgentStatus("idle"); setAgentPlan(null); setAgentError(""); setAgentFailure(null);
     setQuery(next);
     try {
       const response=await fetch("/api/venues",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(next)});
@@ -121,7 +122,11 @@ export default function Home() {
         try {
           const agentResponse=await fetch("/api/agent",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...next,candidates:nextVenues.slice(0,6)})});
           const agentData=await agentResponse.json() as AgentPlanResponse;
-          if(!agentResponse.ok||!agentData.available)throw new Error(agentData.available?"候補分析を完了できませんでした。":agentData.error);
+          if(!agentResponse.ok||!agentData.available){
+            // 原因の種別と追跡IDを控える。ログを読めない環境でも運用者が切り分けられるように。
+            if(!agentData.available)setAgentFailure({reason:agentData.reason,traceId:agentData.traceId});
+            throw new Error(agentData.available?"候補分析を完了できませんでした。":agentData.error);
+          }
           setAgentPlan(agentData);setAgentStatus("ready");
           const advice=new Map(agentData.venueAdvice.map(item=>[item.venueId,item]));
           const enriched=nextVenues.map(venue=>{const item=advice.get(venue.id);return item?{...venue,score:Math.round(venue.score*.65+item.score*.35),reason:item.reason||venue.reason}:venue}).sort((a,b)=>b.score-a.score);
@@ -308,7 +313,7 @@ export default function Home() {
               <div className="p-5"><p className="text-xs font-bold tracking-wide text-[#b55c38]">{v.genre}</p><h3 className="mt-1 line-clamp-2 min-h-[56px] text-xl font-bold tracking-tight">{v.name}</h3><div className="mt-3 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-sm"><span className="whitespace-nowrap font-bold text-[#173f3a]">{v.budgetLabel}</span><span className="jp-text line-clamp-2 min-w-0 text-xs leading-5 text-[#65716e]">{v.access}</span></div><p className="mt-4 min-h-[72px] text-sm leading-6 text-[#65716e]">{v.reason}</p><div className="mt-4 grid grid-cols-3 gap-2 rounded-2xl bg-[#f5f3ed] p-3"><ScorePart label="条件" value={v.breakdown.fit}/><ScorePart label="予算" value={v.breakdown.budget}/><ScorePart label="利便" value={v.breakdown.convenience}/></div><div className="mt-4 flex flex-wrap gap-2">{[v.privateRoom&&"個室あり",v.freeDrink&&"飲み放題",v.course&&"コースあり",v.partyCapacity&&`最大${v.partyCapacity}名`].filter(Boolean).map(tag=><span key={String(tag)} className="rounded-full border border-[#173f3a]/8 bg-[#edf3ef] px-2.5 py-1 text-xs font-medium text-[#3f5f58]">{tag}</span>)}</div><div className="mt-5 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-t border-[#182523]/8 pt-4"><span className="flex items-center gap-1.5 whitespace-nowrap text-xs font-semibold text-[#2f6b57]"><CircleCheck className="size-4 shrink-0"/>空席は店舗へ確認</span><span className="whitespace-nowrap text-xs font-semibold text-[#77807e]">詳細を見る</span></div></div>
             </button>)}
           </div>}
-          <AgentInsight status={agentStatus} plan={agentPlan} error={agentError}/>
+          <AgentInsight status={agentStatus} plan={agentPlan} error={agentError} failure={agentFailure}/>
           {stale&&<div role="status" className="mt-4 flex items-start gap-3 rounded-2xl border border-[#d9cdb5] bg-[#f2eadb] p-4 text-sm leading-6 text-[#6b5433]"><Clock3 className="mt-0.5 size-4 shrink-0"/><div><p className="font-semibold">保存済みの検索結果を表示しています</p><p className="jp-text mt-1 text-xs leading-5">店舗検索サービスに接続できなかったため、{new Date(fetchedAt).toLocaleString("ja-JP",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"})}時点の内容です。営業状況と空席は、予約前に店舗へご確認ください。</p></div></div>}
           {searched&&<div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-xs text-[#687370]"><span>{providerTotal.toLocaleString()}件から条件の近い店舗を表示</span><a href="https://www.hotpepper.jp/" target="_blank" rel="noopener noreferrer" className="font-semibold text-[#1f4b46] underline-offset-4 hover:underline">店舗情報提供：ホットペッパー グルメ</a></div>}
           {chosen&&<><div className="mt-5 grid gap-5 rounded-[26px] border border-[#182523]/8 bg-white p-5 shadow-[0_12px_36px_rgba(24,37,35,.06)] sm:p-6 lg:grid-cols-[.9fr_1.1fr]"><div><div className="flex items-center gap-2 text-xs font-bold tracking-[.1em] text-[#b55c38]"><MapPin className="size-4"/>選択中の店舗</div><h3 className="mt-2 text-2xl font-bold">{chosen.name}</h3><div className="mt-4 rounded-2xl border border-[#182523]/6 bg-[#f7f5ef] p-4"><p className="text-xs font-bold text-[#65716e]">住所</p><p className="mt-1 text-sm leading-6 text-[#34413e]">{chosen.address}</p><p className="mt-3 text-xs font-bold text-[#65716e]">アクセス</p><p className="mt-1 text-sm leading-6 text-[#34413e]">{chosen.access}</p></div><div className="mt-4"><MapLinks address={chosen.address}/></div><a href={chosen.url} target="_blank" rel="noopener noreferrer" className="mt-3 inline-flex min-h-11 items-center gap-2 text-sm font-bold text-[#173f3a] underline-offset-4 hover:underline">店舗ページで詳細・空席を確認<ExternalLink className="size-4"/></a></div><VenueMap address={chosen.address} label={chosen.name}/></div>
@@ -352,7 +357,7 @@ export default function Home() {
               {shareStatus&&<p role="status" className="mt-2 text-xs leading-5 text-[#65716e]">{shareStatus}</p>}
               </div></div><CreateGroup title={`${query.purpose}のグループ`} initial={{venueName:chosen.name,address:chosen.address,date:eventDate,time:eventTime,people:query.people,price:chosen.estimatedPrice||query.budget,status:"planning",bookingReference:"",note:"",website:chosen.url}}/></>:<EmptyScreen icon={Users} title="先に会場候補を選んでください" description="参加者へ共有する店舗を選ぶと、グループを作成できます。" action="会場候補へ" onClick={()=>navigate("venues")}/>}</section>}
 
-        {activeView==="suggestions"&&<section><ScreenHeading eyebrow="ENCOPA SUGGESTION" title="プランへの提案" description="検索条件と候補店を整理し、次に確認すべき内容を表示します。"/>{searched?<><AgentInsight status={agentStatus} plan={agentPlan} error={agentError}/><div className="mt-5 rounded-[24px] border border-[#182523]/8 bg-white p-5"><h2 className="text-lg font-bold">次のアクション</h2><div className="mt-4 grid gap-3 sm:grid-cols-3"><CheckCard icon={Search} title="候補を比較" value={`${candidates.length}件から会に合う店舗を確認`}/><CheckCard icon={Users} title="参加者へ共有" value="出欠と食事の配慮をグループで確認"/><CheckCard icon={CalendarDays} title="予約を確定" value="店舗へ連絡後、予定をカレンダーへ追加"/></div></div></>:<EmptyScreen icon={Lightbulb} title="店舗検索後に提案を表示します" description="条件を入力して実店舗を検索すると、候補比較と次の確認事項を整理します。" action="店舗を検索" onClick={()=>navigate("home")}/>}</section>}
+        {activeView==="suggestions"&&<section><ScreenHeading eyebrow="ENCOPA SUGGESTION" title="プランへの提案" description="検索条件と候補店を整理し、次に確認すべき内容を表示します。"/>{searched?<><AgentInsight status={agentStatus} plan={agentPlan} error={agentError} failure={agentFailure}/><div className="mt-5 rounded-[24px] border border-[#182523]/8 bg-white p-5"><h2 className="text-lg font-bold">次のアクション</h2><div className="mt-4 grid gap-3 sm:grid-cols-3"><CheckCard icon={Search} title="候補を比較" value={`${candidates.length}件から会に合う店舗を確認`}/><CheckCard icon={Users} title="参加者へ共有" value="出欠と食事の配慮をグループで確認"/><CheckCard icon={CalendarDays} title="予約を確定" value="店舗へ連絡後、予定をカレンダーへ追加"/></div></div></>:<EmptyScreen icon={Lightbulb} title="店舗検索後に提案を表示します" description="条件を入力して実店舗を検索すると、候補比較と次の確認事項を整理します。" action="店舗を検索" onClick={()=>navigate("home")}/>}</section>}
 
         {activeView==="history"&&<section><ScreenHeading eyebrow="HISTORY" title="プランの履歴" description="この端末で行った変更と進行状況を確認できます。"/><div className="rounded-[24px] border border-[#182523]/8 bg-white p-5 sm:p-6"><div className="space-y-1">{audit.map((item,index)=><div key={item.id} className="flex gap-4 border-b border-[#182523]/7 py-4 last:border-0"><span className={`mt-1 grid size-8 shrink-0 place-items-center rounded-full ${index===0?"bg-[#fde8df] text-[#c75534]":"bg-[#edf0ec] text-[#65716e]"}`}>{index===0?<Sparkles className="size-4"/>:<Clock3 className="size-4"/>}</span><div className="min-w-0"><div className="flex flex-wrap items-baseline gap-x-3"><p className="font-semibold">{item.label}</p>{item.at>0&&<time dateTime={new Date(item.at).toISOString()} className="text-xs tabular-nums text-[#87908d]">{new Date(item.at).toLocaleString("ja-JP",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"})}</time>}</div><p className="mt-1 text-sm leading-6 text-[#65716e]">{item.detail}</p></div></div>)}</div></div></section>}
       </div>

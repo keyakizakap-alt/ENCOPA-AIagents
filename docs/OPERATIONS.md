@@ -35,6 +35,23 @@
 
 利用者から申告されたエラーIDは、レスポンスの`traceId`および画面の「エラーID」と一致します。
 
+分析が失敗したときは、画面の「管理者向け」欄に原因の種別が出ます。ログを参照できない環境でも、ここから切り分けられます。
+
+| reason | 意味 | 確認すること |
+|---|---|---|
+| `not_configured` | 接続設定が未完了 | `ORCAROUTER_API_KEY`、`ORCAROUTER_BASE_URL`、`ORCAROUTER_ALLOWED_HOSTS` |
+| `provider_auth` | 資格情報を拒否（401 / 403） | APIキーの値と有効期限 |
+| `provider_not_found` | 接続先またはモデルが見つからない（404） | `ORCAROUTER_MODEL`、`ORCAROUTER_BASE_URL`。既定値は`auto`と`https://api.orcarouter.ai/v1` |
+| `provider_rejected` | リクエスト内容を拒否（その他の4xx） | モデルが対応する形式。最小構成での再試行は自動で行っています |
+| `provider_rate_limited` | 取得元の利用上限（429） | 提供元の契約上限 |
+| `provider_unavailable` | 取得元の障害または到達不可 | 提供元の稼働状況、ネットワーク |
+| `provider_timeout` | 制限時間内に応答なし | 提供元の応答時間。1回あたり12秒、全体40秒 |
+| `provider_bad_response` | 応答が空、またはJSONとして読めない | モデルがJSON出力に対応しているか |
+| `circuit_open` | 連続失敗で停止中 | 自動復帰します。根本原因は直前の`agent_workflow_failed`を参照 |
+| `budget_spent` | 当日の上限 | `ENCOPA_AGENT_DAILY_LIMIT` |
+
+この欄に鍵・接続先・モデル名・利用者データは含めていません。
+
 `agent_workflow_failed`が連続3回に達すると、`ENCOPA_AGENT_BREAKER_COOLDOWN_MS`（既定60秒）の間、外部呼び出し自体を停止します（プロセス内メモリで保持するため、インスタンスごとに独立して動作します）。
 
 **APIキー投入直後に確認すること**：最初の検索で`agent_plan_ok`が出れば正常です。`reason`が`orca_http_401`なら鍵、`orca_http_404`なら`ORCAROUTER_MODEL`または`ORCAROUTER_BASE_URL`を確認してください。リクエスト形式が拒否された場合は最小構成（`temperature`なし・`response_format`なし・`max_completion_tokens`）で自動的に再試行します。
