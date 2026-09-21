@@ -2,12 +2,24 @@
 @import "tw-animate-css";
 @import "../vendor/shadcn-tailwind-4.13.0.css";
 
+/*
+ * ENCOPA has one theme. The vendored shadcn components still carry dark: variants, and
+ * Tailwind's default dark variant is prefers-color-scheme, so on a phone or laptop set to
+ * dark those variants fired over a light palette that has no dark tokens: the select and
+ * the number inputs picked up dark:bg-input/30 and rendered grey next to white neighbours,
+ * while plain buttons stayed white. Binding the variant to a class nothing ever sets makes
+ * every dark: utility inert until the app actually gains a dark theme.
+ */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @utility scrollbar-none {
   scrollbar-width: none;
   &::-webkit-scrollbar { display: none; }
 }
 
 :root {
+  /* Also keeps the browser from dark-rendering native controls and scrollbars. */
+  color-scheme: light;
   --background: #f7f5ef;
   --foreground: #182523;
   --card: #ffffff;

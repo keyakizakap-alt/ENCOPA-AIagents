@@ -12,12 +12,16 @@ import { chromium } from 'playwright-core';
 
 const target = process.argv[2] || 'http://127.0.0.1:3000';
 const shotDir = process.argv[3] || '';
+// The last entry renders in a dark-mode browser. The app has one theme, but the vendored
+// components ship dark: variants; when those fire over a light palette, a few controls turn
+// grey beside white ones. Nothing else here catches that, because the default is light.
 const widths = [
-  ['320', 320, 1000, true],
-  ['390', 390, 1000, true],
-  ['834', 834, 1000, false],
-  ['1280', 1280, 950, false],
-  ['1536', 1536, 950, false],
+  ['320', 320, 1000, true, 'light'],
+  ['390', 390, 1000, true, 'light'],
+  ['834', 834, 1000, false, 'light'],
+  ['1280', 1280, 950, false, 'light'],
+  ['1536', 1536, 950, false, 'light'],
+  ['1280d', 1280, 950, false, 'dark'],
 ];
 
 const browser = await chromium.launch({
@@ -26,8 +30,8 @@ const browser = await chromium.launch({
 });
 
 let failures = 0;
-for (const [name, width, height, mobile] of widths) {
-  const page = await browser.newPage({ viewport: { width, height }, isMobile: mobile, hasTouch: mobile });
+for (const [name, width, height, mobile, colorScheme] of widths) {
+  const page = await browser.newPage({ viewport: { width, height }, isMobile: mobile, hasTouch: mobile, colorScheme });
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e).slice(0, 120)));
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text().slice(0, 120)) });
@@ -47,6 +51,16 @@ for (const [name, width, height, mobile] of widths) {
         .map((el) => Math.round(el.getBoundingClientRect().height))
         .filter((h) => h > 0));
     const uneven = [...new Set(rowHeights)];
+    // Controls in one row must also share a background. Comparing only the same kind of
+    // control would not catch this: the faulty ones agree with each other. Every labelled
+    // field in the row is compared, whatever element it is built from; the cell holding the
+    // submit button carries no label and is left out, since it is meant to stand apart.
+    const rowBackgrounds = [...new Set([...document.querySelectorAll('#conditions, [data-row="conditions"]')]
+      .flatMap((row) => [...row.children]
+        .filter((cell) => cell.querySelector('label'))
+        .map((cell) => cell.querySelector('input, [role="combobox"], button'))
+        .filter(Boolean)
+        .map((el) => getComputedStyle(el).backgroundColor)))];
     // Tailwind v4 dropped cursor:pointer from its button preflight, which left every
     // button in the app looking inert. An enabled control must read as pressable, and a
     // disabled one must not.
@@ -65,6 +79,7 @@ for (const [name, width, height, mobile] of widths) {
       styled: document.styleSheets.length > 0,
       truncated,
       uneven,
+      rowBackgrounds,
       affordance,
       controlHeights: [...new Set(controls.map((r) => Math.round(r.height)))].sort((a, b) => a - b),
     };
@@ -76,11 +91,12 @@ for (const [name, width, height, mobile] of widths) {
   if (!report.styled) problems.push('スタイルシート未適用');
   if (report.truncated > 0) problems.push(`文字切れ ${report.truncated} 件`);
   if (report.uneven.length > 1) problems.push(`検索条件の高さ不揃い: ${report.uneven.join('/')}px`);
+  if (report.rowBackgrounds.length > 1) problems.push(`検索条件の背景不揃い: ${report.rowBackgrounds.join(' / ')}`);
   if (report.affordance.length) problems.push(`カーソル不正 ${report.affordance.length} 件: ${report.affordance.slice(0, 3).join(' / ')}`);
   if (errors.length) problems.push(`コンソールエラー ${errors.length} 件: ${errors[0]}`);
 
   if (problems.length) failures += 1;
-  console.log(`${name.padStart(4)}px  ${problems.length ? '✗ ' + problems.join(' / ') : '✓ 問題なし'}`);
+  console.log(`${name.padStart(5)}   ${problems.length ? '✗ ' + problems.join(' / ') : '✓ 問題なし'}`);
   if (shotDir) await page.screenshot({ path: `${shotDir}/${name}.png`, fullPage: false });
   await page.close();
 }
