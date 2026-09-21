@@ -1,7 +1,5 @@
 import {
   CalendarDays,
-  Check,
-  Clock3,
   History,
   Home,
   MapPin,
