@@ -25,12 +25,38 @@
 | `agent_specialists_failed` / `agent_synthesis_failed` | 詳細分析の一部が失敗し、標準計画へ縮退 |
 | `agent_cache_read_failed` / `agent_cache_write_failed` | キャッシュ処理の失敗。リクエストは継続します |
 | `request_failed` | 共有機能の想定外エラー。例外クラス名のみ記録します |
+| `venue_provider_call` | 店舗検索がホットペッパーを呼び出した。`shops`は取得件数 |
+| `venue_cache_hit` | 保存済み応答で返答。外部呼び出しなし |
+| `venue_provider_retry` | 一過性の失敗を1回だけ再試行した |
+| `venue_provider_failed` | 呼び出し失敗。`consecutiveFailures`が3でブレーカーが開きます |
+| `venue_served_stale` | 保存済みの古い応答で返答。`reason`は`provider_error`／`breaker_open`／`daily_cap`、`ageMs`は経過時間 |
+| `venue_cache_read_failed` / `venue_cache_write_failed` | 保存処理の失敗。検索自体は継続します |
 
 利用者から申告されたエラーIDは、レスポンスの`traceId`および画面の「エラーID」と一致します。
 
 `agent_workflow_failed`が連続3回に達すると、`ENCOPA_AGENT_BREAKER_COOLDOWN_MS`（既定60秒）の間、外部呼び出し自体を停止します（プロセス内メモリで保持するため、インスタンスごとに独立して動作します）。
 
 **APIキー投入直後に確認すること**：最初の検索で`agent_plan_ok`が出れば正常です。`reason`が`orca_http_401`なら鍵、`orca_http_404`なら`ORCAROUTER_MODEL`または`ORCAROUTER_BASE_URL`を確認してください。リクエスト形式が拒否された場合は最小構成（`temperature`なし・`response_format`なし・`max_completion_tokens`）で自動的に再試行します。
+
+## 店舗検索の保護
+
+ホットペッパーへの呼び出しは、検索条件のうち**都道府県と人数だけ**で決まります。そのため保存済みの応答1件が、同じ地域・同じ人数に対する予算・優先条件・目的の異なる検索すべてに使い回せます。並び替えはリクエストごとに行うため、利用者ごとの結果は変わりません。
+
+| 仕組み | 既定値 | 環境変数 |
+|---|---|---|
+| 保存済み応答を再利用する期間 | 30分 | （固定） |
+| 取得元が落ちているときに古い応答を使える期間 | 24時間 | （固定） |
+| 一過性の失敗（タイムアウト・5xx）の再試行 | 1回のみ | （固定） |
+| 連続失敗でブレーカーが開く回数 | 3回 | （固定） |
+| ブレーカーの復帰までの時間 | 60秒 | `ENCOPA_VENUE_BREAKER_COOLDOWN_MS` |
+| 1日あたりの呼び出し上限 | 1000回 | `ENCOPA_VENUE_DAILY_LIMIT` |
+| 1IPあたりの検索上限 | 30回/時 | `ENCOPA_VENUE_IP_HOURLY_LIMIT` |
+
+- **認証拒否（401/403）とレート制限（429）は再試行しません。** 再試行しても直らず、上限をさらに消費するためです。
+- **1日の上限は減速ではなく停止です。** 到達後は保存済みの応答で返すか、429で断ります。到達しても追加の呼び出しは発生しません。
+- 古い応答を返したときは、レスポンスに`stale: true`が付き、画面にも取得時刻とともに「保存済みの検索結果を表示しています」と明示されます。**黙って古い情報を出すことはありません。**
+- リクエスト内容や応答の扱いを変更したときは、`app/api/venues/route.ts`の`VENUE_VERSION`を更新してください。保存済み応答がすべて無効化されます。
+- `encopa_venue_cache`は取得元の応答のみを保持し、利用者データを含みません（キーはSHA-256ハッシュ）。
 
 ## キャッシュ運用
 
@@ -43,8 +69,9 @@
 ## 定期運用
 
 - 毎日：Vercel Functionの5xx、DB接続エラー、OrcaRouterのエラー率を確認
-- 毎週：`pnpm db:cleanup`を実行し期限切れデータ（グループ・レート制限・計画キャッシュ）を削除
+- 毎週：`pnpm db:cleanup`を実行し期限切れデータ（グループ・レート制限・計画キャッシュ・店舗検索キャッシュ）を削除
 - 毎月：依存関係の監査、Turso利用量、ホットペッパーWebサービス利用状況、OrcaRouter利用量を確認
+- 毎月：`venue_provider_call`と`venue_cache_hit`の比率を確認し、キャッシュが効いていない場合は保持期間を見直す。`venue_served_stale`が常態化している場合は取得元の状態を調査する
 - 毎月：通常分析と詳細分析の比率、`ENCOPA_AGENT_DETAILED_DAILY_LIMIT`到達回数を確認し、詳細分析が恒常的に多い場合は判定条件と入力データ品質を見直す
 - 秘密値漏えい時：Tursoトークン、作成コード、ホットペッパーAPIキー、OrcaRouter APIキーをローテーションする。`ENCOPA_DATA_KEY`は先に既存データを復号・再暗号化する移行手順を用意し、単純な差し替えは行わない
 
@@ -73,12 +100,15 @@
 - ホームの「やることリスト」が実際の操作に追従する（検索前は残り4件、候補取得で1件完了、店舗を選ぶと2件完了）
 - ホームの「AIエージェントの進行」に操作時刻が表示される
 - OrcaRouter停止時も、グループのお知らせ文は変わらず作成できる
+- 店舗検索を2回続けて実行し、2回目で`venue_cache_hit`が出る（取得元を呼ばない）
+- 取得元が応答しないとき、保存済みの結果と「保存済みの検索結果を表示しています」の注記が出る
 - 1280px幅（サイドバー＋右カラムで本文が約640pxになる幅）で、検索条件の各入力が同じ高さで並び、見出しと会場カードの文字が語中で折れない
 
 ## スキーマ変更履歴
 
 | 変更 | 内容 | 既存データへの影響 |
 | --- | --- | --- |
-| 出欠管理（本版） | `encopa_members`に`rsvp`（既定`'pending'`）、`affiliation`（既定`''`）、`answered_at`（既定`0`）を追加 | なし。`ALTER TABLE ADD COLUMN`のみで、既存行は既定値が入る。ロールバック時は新しい列が無視されるだけで、旧コードもそのまま動作する |
+| 店舗検索の保護（本版） | `encopa_venue_cache`を追加 | なし。新規テーブルのみ。ロールバック時は参照されなくなるだけ |
+| 出欠管理 | `encopa_members`に`rsvp`（既定`'pending'`）、`affiliation`（既定`''`）、`answered_at`（既定`0`）を追加 | なし。`ALTER TABLE ADD COLUMN`のみで、既存行は既定値が入る。ロールバック時は新しい列が無視されるだけで、旧コードもそのまま動作する |
 
 追加は`lib/server/db.ts`の`ADDED_COLUMNS`で行い、2回目以降は「duplicate column name」を検知して読み飛ばします。列の削除や型変更は行いません。

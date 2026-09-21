@@ -70,6 +70,7 @@ export default function Home() {
   const [agentError,setAgentError]=useState("");
   const [providerTotal,setProviderTotal]=useState(0);
   const [fetchedAt,setFetchedAt]=useState(0);
+  const [stale,setStale]=useState(false);
   const [selected,setSelected]=useState(0);
   const [picked,setPicked]=useState(false);
   const [approvalOpen,setApprovalOpen]=useState(false);
@@ -112,7 +113,7 @@ export default function Home() {
       const data=await response.json() as Partial<VenueSearchResponse>&{error?:string};
       if(!response.ok)throw new Error(data.error||"店舗を検索できませんでした。");
       const nextVenues=Array.isArray(data.venues)?data.venues:[];
-      setVenues(nextVenues);setProviderTotal(Number(data.total||nextVenues.length));setFetchedAt(Number(data.fetchedAt||Date.now()));
+      setVenues(nextVenues);setProviderTotal(Number(data.total||nextVenues.length));setFetchedAt(Number(data.fetchedAt||Date.now()));setStale(data.stale===true);
       if(!nextVenues.length)setSearchError("条件に合う店舗が見つかりませんでした。人数や予算、個室条件を変えてお試しください。");
       addAudit("実店舗を検索",`${next.area}で${nextVenues.length}件の候補を表示`);
       if(nextVenues.length){
@@ -309,6 +310,7 @@ export default function Home() {
             </button>)}
           </div>}
           <AgentInsight status={agentStatus} plan={agentPlan} error={agentError}/>
+          {stale&&<div role="status" className="mt-4 flex items-start gap-3 rounded-2xl border border-[#d9cdb5] bg-[#f2eadb] p-4 text-sm leading-6 text-[#6b5433]"><Clock3 className="mt-0.5 size-4 shrink-0"/><div><p className="font-semibold">保存済みの検索結果を表示しています</p><p className="jp-text mt-1 text-xs leading-5">店舗検索サービスに接続できなかったため、{new Date(fetchedAt).toLocaleString("ja-JP",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"})}時点の内容です。営業状況と空席は、予約前に店舗へご確認ください。</p></div></div>}
           {searched&&<div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-xs text-[#687370]"><span>{providerTotal.toLocaleString()}件から条件の近い店舗を表示</span><a href="https://www.hotpepper.jp/" target="_blank" rel="noopener noreferrer" className="font-semibold text-[#1f4b46] underline-offset-4 hover:underline">店舗情報提供：ホットペッパー グルメ</a></div>}
           {chosen&&<><div className="mt-5 grid gap-5 rounded-[26px] border border-[#182523]/8 bg-white p-5 shadow-[0_12px_36px_rgba(24,37,35,.06)] sm:p-6 lg:grid-cols-[.9fr_1.1fr]"><div><div className="flex items-center gap-2 text-xs font-bold tracking-[.1em] text-[#b55c38]"><MapPin className="size-4"/>選択中の店舗</div><h3 className="mt-2 text-2xl font-bold">{chosen.name}</h3><div className="mt-4 rounded-2xl border border-[#182523]/6 bg-[#f7f5ef] p-4"><p className="text-xs font-bold text-[#65716e]">住所</p><p className="mt-1 text-sm leading-6 text-[#34413e]">{chosen.address}</p><p className="mt-3 text-xs font-bold text-[#65716e]">アクセス</p><p className="mt-1 text-sm leading-6 text-[#34413e]">{chosen.access}</p></div><div className="mt-4"><MapLinks address={chosen.address}/></div><a href={chosen.url} target="_blank" rel="noopener noreferrer" className="mt-3 inline-flex min-h-11 items-center gap-2 text-sm font-bold text-[#173f3a] underline-offset-4 hover:underline">店舗ページで詳細・空席を確認<ExternalLink className="size-4"/></a></div><VenueMap address={chosen.address} label={chosen.name}/></div>
           <div className="mt-5 grid gap-4 rounded-[26px] border border-[#173f3a]/12 bg-[#e8f0ec] p-5 sm:p-6 xl:grid-cols-[minmax(240px,1fr)_auto_auto] xl:items-center"><div className="flex items-center gap-3"><span className="grid size-10 place-items-center rounded-2xl bg-white text-[#173f3a] shadow-sm"><Users className="size-4"/></span><div><p className="font-bold">このプランで参加者に確認する</p><p className="mt-1 text-sm text-[#65716e]">日時・候補店・予算をまとめて共有できます</p></div></div><div className="flex flex-wrap gap-x-6 gap-y-2"><MiniStat label="参加予定" value={`${query.people}名`}/><MiniStat label="予算目安" value={chosen.budgetLabel}/><MiniStat label="候補順位" value={`${selected+1}位`}/></div><Button onClick={()=>setApprovalOpen(true)} className="h-12 rounded-[14px] bg-[#173f3a] px-6 font-bold text-white shadow-lg hover:bg-[#0e332f]">内容を確認<ArrowRight className="ml-2 size-4"/></Button></div></>}
