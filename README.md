@@ -5,6 +5,7 @@
 ## 実装済み
 
 - エリア、予算、人数、個室などを使った実在店舗の検索・比較
+- OrcaRouterによる複数担当の並列分析と統合判断
 - 28品目と「その他」から選べる食物アレルギー回答
 - 店舗住所からGoogleマップとAppleマップを開くリンク
 - 招待リンク式の会グループ
@@ -27,7 +28,7 @@ cp .env.example .env.local
 pnpm dev
 ```
 
-ローカルでは`TURSO_DATABASE_URL`が空の場合、`data/encopa.db`を自動作成します。`.env.local`へ`ENCOPA_CREATE_KEY`と、[ホットペッパーグルメWebサービス](https://webservice.recruit.co.jp/doc/hotpepper/reference.html)で発行した`HOTPEPPER_API_KEY`を設定してください。
+ローカルでは`TURSO_DATABASE_URL`が空の場合、`data/encopa.db`を自動作成します。`.env.local`へ`ENCOPA_CREATE_KEY`、`ENCOPA_DATA_KEY`、[ホットペッパーグルメWebサービス](https://webservice.recruit.co.jp/doc/hotpepper/reference.html)の`HOTPEPPER_API_KEY`、[OrcaRouter](https://docs.orcarouter.ai/introduction)の`ORCAROUTER_API_KEY`を設定してください。暗号化キーは`openssl rand -hex 32`で生成できます。
 
 ## Vercelへデプロイ
 
@@ -41,8 +42,14 @@ pnpm dev
 | `TURSO_DATABASE_URL` | 本番必須 | 共有データベースURL |
 | `TURSO_AUTH_TOKEN` | 本番必須 | Tursoのサーバー専用トークン |
 | `ENCOPA_CREATE_KEY` | 本番必須 | 幹事がグループを作るためのコード |
+| `ENCOPA_DATA_KEY` | 本番必須 | 予約内容とアレルギー情報をAES-256-GCMで暗号化する32バイト鍵 |
 | `APP_ORIGIN` | 本番必須 | `https://example.com`形式の公開Origin |
 | `HOTPEPPER_API_KEY` | 本番必須 | 実店舗検索。ブラウザへ公開しないサーバー専用キー |
+| `ORCAROUTER_API_KEY` | 本番必須 | 候補分析。ブラウザへ公開しない`sk-orca-*`キー |
+| `ORCAROUTER_BASE_URL` | 任意 | 既定値はHosted版の`https://api.orcarouter.ai/v1` |
+| `ORCAROUTER_ALLOWED_HOSTS` | 任意 | 信頼するセルフホスト接続先を追加する場合のみ指定 |
+| `ORCAROUTER_MODEL` | 任意 | 既定値はOrcaRouterがモデルを選ぶ`auto` |
+| `ENCOPA_AGENT_DAILY_LIMIT` | 任意 | 1日あたりの分析ワークフロー上限。既定100 |
 
 秘密値に`NEXT_PUBLIC_`を付けないでください。Vercelのローカルファイルシステムは永続化されないため、本番で`file:`データベースは使用できません。
 
@@ -58,6 +65,7 @@ pnpm audit --prod
 
 `pnpm test`は一時SQLiteデータベースと本番ビルドを起動し、次を統合試験します。
 
+- OrcaRouter互換モックを使った専門担当3つと統括担当のオーケストレーション
 - 未参加者による予約内容の閲覧拒否
 - 参加者2人と幹事のデータ分離
 - アレルギー同意と閲覧権限
@@ -71,12 +79,16 @@ pnpm audit --prod
 ## データとセキュリティ
 
 - 認証情報は32バイトのランダム値をCookieへ保存し、DBにはSHA-256ハッシュだけを保持します。
+- 予約内容とアレルギー情報はAES-256-GCMで暗号化して保存します。既存の平文レコードは読み取り互換を維持し、更新時から暗号化されます。
 - CookieはHttpOnly、SameSite Strict、本番ではSecureです。
 - POSTは同一Origin、JSON、16KiB以下に制限します。
 - グループは90日、参加セッションは30日、招待リンクは7日で期限切れになります。
 - チャットは最新100件を表示します。
 - 店舗検索は送信元ごとに1時間30回へ制限し、外部APIは8秒でタイムアウトします。
 - 店舗検索結果はDBへ保存せず、この端末の一時保存も23時間以内に失効します。
+- 候補分析へ送るのは検索条件と公開店舗情報だけです。氏名、連絡先、アレルギー品目は送信しません。
+- OrcaRouterの接続先は`api.orcarouter.ai`と明示的に許可したホストだけに制限し、APIキーの誤送信を防ぎます。
+- 候補分析は送信元ごとに1時間10回、全体では設定した日次上限に制限します。
 - グループ削除は復元できません。期限切れデータは`pnpm db:cleanup`で削除できます。
 - 本格運用では、管理者が定期クリーンアップ、バックアップ、監視、障害対応を設定してください。
 
@@ -85,12 +97,15 @@ pnpm audit --prod
 ```text
 app/page.tsx                    候補比較とグループ作成
 app/api/venues/route.ts         実店舗検索、入力検証、候補スコアリング
+app/api/agent/route.ts          OrcaRouterを使った並列分析と統合判断
+components/encopa/agent-insight.tsx  分析状況、確認事項、次の行動
 app/groups/[id]/page.tsx        予約内容・参加者・チャット画面
 app/api/groups/route.ts         グループ作成
 app/api/groups/[id]/route.ts    参加・更新・投稿・権限制御
 lib/server/db.ts                SQLite / Turso接続とスキーマ
 lib/server/security.ts          Cookie、Origin、入力長、レート制限
 tests/groups.test.mjs           共有機能の統合試験
+docs/SECURITY_REVIEW.md         脅威、対策、検証結果、残存リスク
 ```
 
 ## 既知の制約
@@ -101,3 +116,4 @@ tests/groups.test.mjs           共有機能の統合試験
 - アレルギー選択は店舗対応を保証しません。必ず店舗へ確認してください。
 - 実空席、予約実行、プッシュ通知は未接続です。
 - 店舗情報や料金は変更される場合があります。最新情報とアレルギー対応は店舗へ直接確認してください。
+- 1回の候補分析で、専門担当3回と統括担当1回の最大4回のモデル呼び出しが発生します。精度と引き換えに、単発呼び出しより料金と待ち時間が増えます。

@@ -2,6 +2,7 @@ import type { NextRequest } from 'next/server';
 import { database } from '@/lib/server/db';
 import { EMPTY_ALLERGY } from '@/lib/group-types';
 import { newId,reservation } from '@/lib/server/groups';
+import { sealJson } from '@/lib/server/crypto';
 import { equal,failure,hash,HttpError,limit,readBody,sessionResponse,short,token } from '@/lib/server/security';
 export const runtime='nodejs';
 export async function POST(req:NextRequest){return failure(async()=>{
@@ -14,8 +15,8 @@ export async function POST(req:NextRequest){return failure(async()=>{
  const id=newId(),mid=newId(),session=token(),invite=token(),now=Date.now();
  const db=await database();
  await db.batch([
- {sql:'INSERT INTO encopa_groups(id,title,invite_hash,invite_expires,reservation,created_at,expires_at) VALUES(?,?,?,?,?,?,?)',args:[id,title,hash(invite),now+7*86400000,JSON.stringify(booking),now,now+90*86400000]},
- {sql:'INSERT INTO encopa_members(id,group_id,name,role,session_hash,expires_at,allergy,created_at) VALUES(?,?,?,?,?,?,?,?)',args:[mid,id,name,'owner',hash(session),now+30*86400000,JSON.stringify(EMPTY_ALLERGY),now]},
+ {sql:'INSERT INTO encopa_groups(id,title,invite_hash,invite_expires,reservation,created_at,expires_at) VALUES(?,?,?,?,?,?,?)',args:[id,title,hash(invite),now+7*86400000,sealJson(booking),now,now+90*86400000]},
+ {sql:'INSERT INTO encopa_members(id,group_id,name,role,session_hash,expires_at,allergy,created_at) VALUES(?,?,?,?,?,?,?,?)',args:[mid,id,name,'owner',hash(session),now+30*86400000,sealJson(EMPTY_ALLERGY),now]},
  ],'write');
  return sessionResponse({id,invite,inviteExpiresAt:now+7*86400000},id,session);
 })}

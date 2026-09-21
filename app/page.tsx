@@ -4,8 +4,10 @@ import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import { CreateGroup } from "@/components/encopa/create-group";
 import { AllergyPicker } from "@/components/encopa/allergy-picker";
+import { AgentInsight } from "@/components/encopa/agent-insight";
 import { MapLinks, VenueMap } from "@/components/encopa/maps";
 import { EMPTY_ALLERGY, type AllergyProfile } from "@/lib/group-types";
+import type { AgentPlan, AgentPlanResponse } from "@/lib/agent-types";
 import type { VenueSearchResponse, VenueSearchResult } from "@/lib/venue-types";
 import {
   ArrowRight, CalendarDays, Check, ChevronRight, CircleCheck, Clock3, Copy, Download, ExternalLink,
@@ -50,6 +52,9 @@ export default function Home() {
   const [searched,setSearched]=useState(false);
   const [searching,setSearching]=useState(false);
   const [venues,setVenues]=useState<VenueSearchResult[]>([]);
+  const [agentStatus,setAgentStatus]=useState<"idle"|"running"|"ready"|"error">("idle");
+  const [agentPlan,setAgentPlan]=useState<AgentPlan|null>(null);
+  const [agentError,setAgentError]=useState("");
   const [providerTotal,setProviderTotal]=useState(0);
   const [fetchedAt,setFetchedAt]=useState(0);
   const [selected,setSelected]=useState(0);
@@ -78,7 +83,7 @@ export default function Home() {
     };
     if(next.budget>30000||next.people>200){setSearchError("予算は30000円以下、人数は200名以下で入力してください。");return;}
     setSearchError("");
-    setSearching(true); setCompleted(false); setFailover(false); setSelected(0);
+    setSearching(true); setCompleted(false); setFailover(false); setSelected(0); setAgentStatus("idle"); setAgentPlan(null); setAgentError("");
     setQuery(next);
     try {
       const response=await fetch("/api/venues",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(next)});
@@ -88,9 +93,25 @@ export default function Home() {
       setVenues(nextVenues);setProviderTotal(Number(data.total||nextVenues.length));setFetchedAt(Number(data.fetchedAt||Date.now()));
       if(!nextVenues.length)setSearchError("条件に合う店舗が見つかりませんでした。エリア名を駅名や市区町村名に変えてお試しください。");
       addAudit("実店舗を検索",`${next.area}で${nextVenues.length}件の候補を表示`);
+      if(nextVenues.length){
+        setAgentStatus("running");
+        try {
+          const agentResponse=await fetch("/api/agent",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...next,candidates:nextVenues.slice(0,6)})});
+          const agentData=await agentResponse.json() as AgentPlanResponse;
+          if(!agentResponse.ok||!agentData.available)throw new Error(agentData.available?"候補分析を完了できませんでした。":agentData.error);
+          setAgentPlan(agentData);setAgentStatus("ready");
+          const advice=new Map(agentData.venueAdvice.map(item=>[item.venueId,item]));
+          const enriched=nextVenues.map(venue=>{const item=advice.get(venue.id);return item?{...venue,score:Math.round(venue.score*.65+item.score*.35),reason:item.reason||venue.reason}:venue}).sort((a,b)=>b.score-a.score);
+          setVenues(enriched);
+          const recommendedIndex=enriched.findIndex(venue=>venue.id===agentData.recommendedVenueId);
+          if(recommendedIndex>=0)setSelected(recommendedIndex);
+          addAudit("候補を詳しく比較","会場条件と予約前の確認事項を整理しました");
+        } catch (error) {
+          setAgentStatus("error");setAgentError(error instanceof Error?error.message:"候補分析を完了できませんでした。");
+        }
+      }
     } catch (error) {
-      setVenues([]);setProviderTotal(0);
-      setSearchError(error instanceof Error?error.message:"店舗を検索できませんでした。");
+      setVenues([]);setProviderTotal(0);setSearchError(error instanceof Error?error.message:"店舗を検索できませんでした。");
     } finally {
       setSearching(false); setSearched(true); setStage("ranked");
       setTimeout(()=>document.getElementById("results")?.scrollIntoView({behavior:"smooth",block:"start"}),60);
@@ -231,6 +252,7 @@ export default function Home() {
               <div className="p-5"><p className="text-xs font-medium text-[#aa5a3d]">{v.genre}</p><h3 className="mt-1 line-clamp-2 min-h-[56px] text-xl font-semibold tracking-tight">{v.name}</h3><div className="mt-3 flex items-start justify-between gap-3 text-sm"><span className="font-semibold">{v.budgetLabel}</span><span className="line-clamp-2 text-right text-xs text-[#67726f]">{v.access}</span></div><p className="mt-4 min-h-[72px] text-sm leading-6 text-[#687370]">{v.reason}</p><div className="mt-4 grid grid-cols-3 gap-2 rounded-xl bg-[#f7f5ef] p-3"><ScorePart label="条件との一致" value={v.breakdown.fit}/><ScorePart label="予算" value={v.breakdown.budget}/><ScorePart label="利用しやすさ" value={v.breakdown.convenience}/></div><div className="mt-4 flex flex-wrap gap-2">{[v.privateRoom&&"個室あり",v.freeDrink&&"飲み放題",v.course&&"コースあり",v.partyCapacity&&`宴会最大${v.partyCapacity}名`].filter(Boolean).map(tag=><span key={String(tag)} className="rounded-full bg-[#f3f0e8] px-2.5 py-1 text-xs text-[#58625f]">{tag}</span>)}</div><div className="mt-5 flex items-center justify-between border-t border-[#1e2928]/8 pt-4"><span className="flex items-center gap-1.5 text-xs font-medium text-[#2f6b57]"><CircleCheck className="size-4"/>空席は店舗へ確認</span>{selected===i&&<span className="text-xs font-semibold text-[#1f4b46]">選択中</span>}</div></div>
             </button>)}
           </div>}
+          <AgentInsight status={agentStatus} plan={agentPlan} error={agentError}/>
           {searched&&<div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-xs text-[#687370]"><span>{providerTotal.toLocaleString()}件から条件の近い店舗を表示</span><a href="https://www.hotpepper.jp/" target="_blank" rel="noopener noreferrer" className="font-semibold text-[#1f4b46] underline-offset-4 hover:underline">店舗情報提供：ホットペッパー グルメ</a></div>}
           {chosen&&<><div className="mt-5 grid gap-5 rounded-[24px] border border-[#1e2928]/10 bg-white p-5 shadow-sm sm:p-6 lg:grid-cols-[.9fr_1.1fr]"><div><p className="text-xs font-semibold tracking-[.1em] text-[#aa5a3d]">場所を確認</p><h3 className="mt-1 text-xl font-semibold">{chosen.name}</h3><p className="mt-4 text-sm leading-6 text-[#687370]">{chosen.address}</p><p className="mt-2 text-sm leading-6 text-[#687370]">{chosen.access}</p><div className="mt-4"><MapLinks address={chosen.address}/></div><a href={chosen.url} target="_blank" rel="noopener noreferrer" className="mt-3 inline-flex min-h-11 items-center gap-2 text-sm font-semibold text-[#1f4b46] underline-offset-4 hover:underline">店舗ページで詳細・空席を確認<ExternalLink className="size-4"/></a></div><VenueMap address={chosen.address} label={chosen.name}/></div>
           <CreateGroup title={`${query.purpose}のグループ`} initial={{venueName:chosen.name,address:chosen.address,date:eventDate,time:eventTime,people:query.people,price:chosen.estimatedPrice||query.budget,status:"planning",bookingReference:"",note:"",website:chosen.url}}/>
