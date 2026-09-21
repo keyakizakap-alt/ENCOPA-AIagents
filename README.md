@@ -84,7 +84,7 @@ pnpm audit --prod
 - 認証情報は32バイトのランダム値をCookieへ保存し、DBにはSHA-256ハッシュだけを保持します。
 - CookieはHttpOnly、SameSite Strict、本番ではSecureです。
 - POSTは同一Origin、JSON、16KiB以下に制限します。
-- `Content-Security-Policy`（`default-src 'self'` / `object-src 'none'` / `base-uri 'self'` / `form-action 'self'` / `frame-ancestors 'none'`）と`Cross-Origin-Opener-Policy`を配信します。
+- `Content-Security-Policy`はリクエストごとのnonceと`strict-dynamic`で構成し、`middleware.ts`が発行します。`script-src`に`'unsafe-inline'`は含みません（`'unsafe-inline'`と`https:`は`strict-dynamic`非対応ブラウザ向けの後方互換で、対応ブラウザでは無視されます）。`Strict-Transport-Security`（2年・`includeSubDomains`なし）、`Cross-Origin-Opener-Policy`も配信します。
 - グループ作成は、試行回数の制限とは別に、作成コードの検証後にだけ作成枠を消費します。
 - `/api/agent`へ渡す目的・優先度は列挙値で検証し、モデル出力は制御文字・タグ・リンク構文を除去したうえで400字に制限します。候補の順位はローカルの決定的評価が決めるため、モデル出力は順位に影響しません。
 - グループは90日、参加セッションは30日、招待リンクは7日で期限切れになります。
@@ -145,6 +145,23 @@ docs/AUDIT-2026-09.md           監査レポート（評価軸別の採点と根
 ゲートウェイが4xxでリクエストを拒否した場合、最小構成（`temperature`を送らず、`max_tokens`の代わりに`max_completion_tokens`を使用、キャッシュ指定なし）で1回だけ再試行します。推論系モデルは既定以外の`temperature`を受け付けず、`max_tokens`ではなく`max_completion_tokens`を要求することがあるためです。この再試行が効いたかどうかは`agent_call_ok`の`compatibility`で確認できます。
 
 応答の`content`は文字列とパーツ配列の両方を受け付けます。
+
+## レンダリング方式
+
+厳格なCSPはレスポンスごとに異なるnonceを必要とし、プリレンダリング済みのページはそのnonceを持てません（ビルド時のnonceが埋め込まれ、ヘッダと一致せず**全スクリプトがブロックされます**）。そのため`app/layout.tsx`で`export const dynamic = 'force-dynamic'`を指定し、全ルートを動的レンダリングにしています。
+
+`pnpm build`の出力で`/`が`○ (Static)`になっていたら、この指定が外れています。`tests/agent.test.mjs`の「every script carries the nonce from this response」がこの退行を検出します。
+
+## 自律進行レベル
+
+設定ダイアログの「自律進行レベル」は実際に挙動を変えます。
+
+| レベル | 外部モデル | ワークフロー |
+|---|---|---|
+| 提案のみ | **呼び出さない**（コスト0） | 候補の提示まで。参加者確認以降へは進みません |
+| 予約直前まで | 呼び出す | 参加者確認 → 幹事承認 → 予定ファイル作成まで |
+
+以前あった「幹事承認後に予約・予定登録」は削除しました。実店舗予約の連携が存在せず、選んでも何も実行されなかったためです。
 
 ## デザイントークン
 

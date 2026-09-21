@@ -20,7 +20,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 
 type Priority = "balance" | "conversation" | "cost" | "access";
-type Autonomy = "suggest" | "prepare" | "execute";
+type Autonomy = "suggest" | "prepare";
 type Query = { purpose:string; area:string; budget:number; people:number; priority:Priority; privateRoom:boolean; dietary:boolean };
 type VenueBase = {
   id:string; name:string; genre:string; price:number; capacity:number; base:number;
@@ -45,6 +45,10 @@ const venuePool: VenueBase[] = [
 // them is rejected server-side, so the picker and the restore guard share one list.
 const PURPOSES = ["忘年会","新年会","歓迎会","送別会","懇親会","打ち上げ"] as const;
 const PRIORITIES = ["balance","conversation","cost","access"] as const;
+// "execute" is gone: no booking integration exists, so offering it promised an autonomy
+// the app does not have. The two remaining levels each change real behaviour below.
+const AUTONOMIES = ["suggest","prepare"] as const;
+const AUTONOMY_LABELS: Record<Autonomy,string> = {suggest:"提案のみ（外部モデルを使わない）", prepare:"予約直前まで進める"};
 const STAGES = ["draft","ranked","collecting","awaiting_approval","scheduled"] as const;
 
 const steps = [["条件","完了"],["候補比較","いまここ"],["みんなに確認","次"],["幹事が承認",""],["予約・予定確保",""]];
@@ -99,6 +103,15 @@ export default function Home() {
     setSearchError("");
     setSearching(true); setCompleted(false); setFailover(false); setSelected(0);
     setQuery(next);
+    // 提案のみ: the ranking is local and deterministic anyway, so this level skips the
+    // external call outright rather than paying for a description nobody asked for.
+    if(autonomy==="suggest"){
+      setRouter({route:"local-only",model:null,summary:"「提案のみ」のため、外部モデルを呼ばずにローカル評価だけで候補を並べ替えました。",tokenBudget:0,cached:false});
+      addAudit("ローカル評価のみ",`${next.purpose}・${next.people}名・外部送信なし`);
+      setSearching(false); setSearched(true); setStage("ranked");
+      setTimeout(()=>document.getElementById("results")?.scrollIntoView({behavior:"smooth",block:"start"}),60);
+      return;
+    }
     try {
       const response=await fetch("/api/agent",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(next)});
       // A rejected request is a different problem from an unreachable one, and reporting
@@ -145,6 +158,7 @@ export default function Home() {
   };
 
   const advanceWorkflow=()=>{
+    if(autonomy==="suggest"){setSearchError("「提案のみ」では候補の提示までです。先へ進めるには設定で「予約直前まで進める」を選んでください。");setApprovalOpen(false);setSettingsOpen(true);return}
     if(stage==="scheduled"){downloadCalendar();return}
     if(stage==="collecting"){setStage("awaiting_approval");addAudit("参加者回答を集約",`${query.people}名分のデモ回答を反映`);return}
     // The audit entry is only written when a file was actually produced.
@@ -167,6 +181,7 @@ export default function Home() {
         if(value.audit)setAudit(value.audit);
         if(value.eventDate)setEventDate(value.eventDate);
         if(value.eventTime)setEventTime(value.eventTime);
+        if(value.autonomy){setAutonomy(value.autonomy);setDraftAutonomy(value.autonomy)}
       }
     } catch {}
     setRestored(true);
@@ -174,8 +189,8 @@ export default function Home() {
 
   useEffect(()=>{
     if(!restored)return;
-    try {localStorage.setItem("encopa-session-v1",JSON.stringify({query,stage,audit,eventDate,eventTime}));} catch {}
-  },[restored,query,stage,audit,eventDate,eventTime]);
+    try {localStorage.setItem("encopa-session-v1",JSON.stringify({query,stage,audit,eventDate,eventTime,autonomy}));} catch {}
+  },[restored,query,stage,audit,eventDate,eventTime,autonomy]);
 
   useEffect(()=>{
     const context=(document as Document & {modelContext?:{registerTool:(tool:unknown,options?:{signal?:AbortSignal})=>void|Promise<void>}}).modelContext;
@@ -219,7 +234,7 @@ export default function Home() {
         <div className="overflow-hidden rounded-[28px] border border-ink/10 bg-brand shadow-[0_18px_60px_rgba(31,75,70,.14)]">
           <div className="grid gap-7 p-5 sm:p-7 xl:grid-cols-[1fr_280px] xl:p-9">
             <div><div className="mb-5 flex items-center gap-2 text-sand"><Sparkles className="size-4"/><span className="text-[13px] font-semibold tracking-[.08em]">集まる日の準備を、ひとつに</span></div><h1 className="max-w-[680px] font-serif text-[clamp(2rem,4.2vw,4.2rem)] leading-[1.04] tracking-[-.045em] text-cream">条件を変えるたび、<br className="hidden sm:block"/>候補と理由を組み直します。</h1><p className="mt-4 max-w-2xl text-[15px] leading-7 text-[#e5e8df]/75">候補を比べて、予約内容をみんなで共有。アレルギーの確認も、待ち合わせの連絡も、この会のグループで。</p></div>
-            <div className="rounded-[22px] border border-white/12 bg-white/[.07] p-5 text-cream"><p className="text-xs text-white/72">現在の入力上限</p><p className="mt-2 text-3xl font-semibold tracking-tight">{total.toLocaleString()}円</p><div className="mt-5 space-y-3 text-sm"><div className="flex justify-between"><span className="text-white/72">開催</span><span>{eventDate.slice(5).replace("-","/")} {eventTime}</span></div><div className="flex justify-between"><span className="text-white/72">優先</span><span>{priorityLabels[priority]}</span></div><div className="flex justify-between"><span className="text-white/72">進め方</span><span>{autonomy==="suggest"?"提案のみ":autonomy==="prepare"?"予約直前まで":"承認後に実行"}</span></div><div className="border-t border-white/10 pt-3 text-[12px] leading-5 text-white/72">個人名をモデルへ送らず、集約条件だけを評価します。</div></div></div>
+            <div className="rounded-[22px] border border-white/12 bg-white/[.07] p-5 text-cream"><p className="text-xs text-white/72">現在の入力上限</p><p className="mt-2 text-3xl font-semibold tracking-tight">{total.toLocaleString()}円</p><div className="mt-5 space-y-3 text-sm"><div className="flex justify-between"><span className="text-white/72">開催</span><span>{eventDate.slice(5).replace("-","/")} {eventTime}</span></div><div className="flex justify-between"><span className="text-white/72">優先</span><span>{priorityLabels[priority]}</span></div><div className="flex justify-between"><span className="text-white/72">進め方</span><span>{autonomy==="suggest"?"提案のみ":"予約直前まで"}</span></div><div className="border-t border-white/10 pt-3 text-[12px] leading-5 text-white/72">個人名をモデルへ送らず、集約条件だけを評価します。</div></div></div>
           </div>
           <div className="grid gap-3 border-t border-white/10 bg-brand-deep p-4 sm:grid-cols-2 sm:p-5 xl:grid-cols-[1fr_1.25fr_.75fr_.65fr_auto]">
             <Field label="目的"><Select value={purpose} onValueChange={setPurpose}><SelectTrigger className="h-12 w-full rounded-xl border-white/10 bg-white text-ink"><SelectValue/></SelectTrigger><SelectContent>{PURPOSES.map(item=><SelectItem key={item} value={item}>{item}</SelectItem>)}</SelectContent></Select></Field>
@@ -264,9 +279,9 @@ export default function Home() {
       </aside>
     </section>
 
-    <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}><DialogContent className="max-h-[90vh] overflow-y-auto rounded-[24px] bg-surface-raised sm:max-w-[560px]"><DialogHeader><DialogTitle className="font-serif text-2xl">ENCOPAの進行設定</DialogTitle><DialogDescription>設定を保存すると、候補をその場で再評価します。</DialogDescription></DialogHeader><div className="space-y-5 py-2"><div className="grid grid-cols-2 gap-3"><div><Label className="mb-2 block">開催日</Label><Input type="date" value={draftEventDate} onChange={e=>setDraftEventDate(e.target.value)} className="h-11 bg-white"/></div><div><Label className="mb-2 block">開始時刻</Label><Input type="time" value={draftEventTime} onChange={e=>setDraftEventTime(e.target.value)} className="h-11 bg-white"/></div></div><div><Label className="mb-2 block">候補選びで優先すること</Label><Select value={draftPriority} onValueChange={v=>setDraftPriority(v as Priority)}><SelectTrigger className="h-11 w-full bg-white"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="balance">バランス</SelectItem><SelectItem value="conversation">会話しやすさ</SelectItem><SelectItem value="cost">予算の収まり</SelectItem><SelectItem value="access">移動しやすさ</SelectItem></SelectContent></Select></div><div><Label className="mb-2 block">自律進行レベル</Label><Select value={draftAutonomy} onValueChange={v=>setDraftAutonomy(v as Autonomy)}><SelectTrigger className="h-11 w-full bg-white"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="suggest">提案のみ</SelectItem><SelectItem value="prepare">予約直前まで</SelectItem><SelectItem value="execute">幹事承認後に予約・予定登録</SelectItem></SelectContent></Select></div><SettingSwitch label="個室・半個室を優先" description="会話のしやすさを評価に加えます" checked={draftPrivateRoom} onCheckedChange={setDraftPrivateRoom}/><SettingSwitch label="食事制限への対応を優先" description="相談可のデモ条件を評価します。対応保証ではありません" checked={draftDietary} onCheckedChange={setDraftDietary}/><AllergyPicker value={allergy} onChange={setAllergy} privateSharing={false}/></div><DialogFooter><Button variant="outline" onClick={()=>setSettingsOpen(false)}>変更しない</Button><Button onClick={applySettings} className="bg-brand text-white hover:bg-brand-deep">保存して再評価</Button></DialogFooter></DialogContent></Dialog>
+    <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}><DialogContent className="max-h-[90vh] overflow-y-auto rounded-[24px] bg-surface-raised sm:max-w-[560px]"><DialogHeader><DialogTitle className="font-serif text-2xl">ENCOPAの進行設定</DialogTitle><DialogDescription>設定を保存すると、候補をその場で再評価します。</DialogDescription></DialogHeader><div className="space-y-5 py-2"><div className="grid grid-cols-2 gap-3"><div><Label className="mb-2 block">開催日</Label><Input type="date" value={draftEventDate} onChange={e=>setDraftEventDate(e.target.value)} className="h-11 bg-white"/></div><div><Label className="mb-2 block">開始時刻</Label><Input type="time" value={draftEventTime} onChange={e=>setDraftEventTime(e.target.value)} className="h-11 bg-white"/></div></div><div><Label className="mb-2 block">候補選びで優先すること</Label><Select value={draftPriority} onValueChange={v=>setDraftPriority(v as Priority)}><SelectTrigger className="h-11 w-full bg-white"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="balance">バランス</SelectItem><SelectItem value="conversation">会話しやすさ</SelectItem><SelectItem value="cost">予算の収まり</SelectItem><SelectItem value="access">移動しやすさ</SelectItem></SelectContent></Select></div><div><Label className="mb-2 block">自律進行レベル</Label><Select value={draftAutonomy} onValueChange={v=>setDraftAutonomy(v as Autonomy)}><SelectTrigger className="h-11 w-full bg-white"><SelectValue/></SelectTrigger><SelectContent>{AUTONOMIES.map(item=><SelectItem key={item} value={item}>{AUTONOMY_LABELS[item]}</SelectItem>)}</SelectContent></Select></div><SettingSwitch label="個室・半個室を優先" description="会話のしやすさを評価に加えます" checked={draftPrivateRoom} onCheckedChange={setDraftPrivateRoom}/><SettingSwitch label="食事制限への対応を優先" description="相談可のデモ条件を評価します。対応保証ではありません" checked={draftDietary} onCheckedChange={setDraftDietary}/><AllergyPicker value={allergy} onChange={setAllergy} privateSharing={false}/></div><DialogFooter><Button variant="outline" onClick={()=>setSettingsOpen(false)}>変更しない</Button><Button onClick={applySettings} className="bg-brand text-white hover:bg-brand-deep">保存して再評価</Button></DialogFooter></DialogContent></Dialog>
 
-    <Dialog open={approvalOpen} onOpenChange={setApprovalOpen}><DialogContent className="max-h-[90vh] overflow-y-auto rounded-[24px] border-0 bg-surface-raised p-0 sm:max-w-[600px]"><DialogHeader className="border-b border-ink/10 p-6 text-left"><DialogTitle className="font-serif text-2xl">確認・承認・予定確保</DialogTitle><DialogDescription>外部操作の前に人が承認する段階を明確に分けています。</DialogDescription></DialogHeader><div className="space-y-4 px-6"><div className="rounded-2xl border border-ink/10 bg-white p-4"><p className="text-xs text-muted-ink">現在の第一候補</p><p className="mt-1 text-lg font-semibold">{chosen?.name}</p><div className="mt-3 grid grid-cols-2 gap-3 text-sm"><span className="text-muted-ink">開催予定</span><span className="text-right font-medium">{eventDate} {eventTime}</span><span className="text-muted-ink">費用見込み</span><span className="text-right font-medium">{((chosen?.price??0)*query.people).toLocaleString()}円</span><span className="text-muted-ink">注意</span><span className="text-right font-medium">{chosen?.risk}</span></div></div><div className="grid gap-3 sm:grid-cols-3"><CheckCard icon={Clock3} title="日程" value="開催日時を固定"/><CheckCard icon={UtensilsCrossed} title="食事" value="店舗への確認が必要"/><CheckCard icon={Users} title="匿名性" value="必要情報だけ集約"/></div>{stage==="scheduled"?<div className="rounded-2xl bg-[#e8f0ea] p-4 text-sm text-[#24533f]"><div className="flex items-center gap-2 font-semibold"><CircleCheck className="size-5"/>予定ファイルを作成しました</div><p className="mt-1 pl-7 text-xs leading-5">カレンダーへ登録できます。外部店舗の予約APIは未接続のため、予約成立とは表示しません。</p></div>:completed?<div className="rounded-2xl bg-[#e8f0ea] p-4 text-sm text-[#24533f]"><div className="flex items-center gap-2 font-semibold"><CircleCheck className="size-5"/>{stage==="awaiting_approval"?"回答が揃い、最終承認待ちです":"参加者確認のデモです"}</div><p className="mt-1 pl-7 text-xs leading-5">操作は監査ログへ記録され、予約権限はまだ使用されていません。</p></div>:<div className="rounded-2xl bg-[#f4eee2] p-4 text-xs leading-5 text-[#75643f]">回答は会場評価に必要な形へ集約し、個人名や自由記述をOrca Routerへ送りません。</div>}</div><DialogFooter className="p-6 pt-2 sm:justify-between"><Button variant="outline" onClick={()=>setApprovalOpen(false)}>候補を見直す</Button><Button onClick={advanceWorkflow} className="bg-brand text-white hover:bg-brand-deep">{stage==="scheduled"?<><Download className="mr-2 size-4"/>予定を再取得</>:stage==="awaiting_approval"?"最終承認して予定作成":stage==="collecting"?"デモ回答を反映":"デモを開始"}</Button></DialogFooter></DialogContent></Dialog>
+    <Dialog open={approvalOpen} onOpenChange={setApprovalOpen}><DialogContent className="max-h-[90vh] overflow-y-auto rounded-[24px] border-0 bg-surface-raised p-0 sm:max-w-[600px]"><DialogHeader className="border-b border-ink/10 p-6 text-left"><DialogTitle className="font-serif text-2xl">確認・承認・予定確保</DialogTitle><DialogDescription>外部操作の前に人が承認する段階を明確に分けています。</DialogDescription></DialogHeader><div className="space-y-4 px-6"><div className="rounded-2xl border border-ink/10 bg-white p-4"><p className="text-xs text-muted-ink">現在の第一候補</p><p className="mt-1 text-lg font-semibold">{chosen?.name}</p><div className="mt-3 grid grid-cols-2 gap-3 text-sm"><span className="text-muted-ink">開催予定</span><span className="text-right font-medium">{eventDate} {eventTime}</span><span className="text-muted-ink">費用見込み</span><span className="text-right font-medium">{((chosen?.price??0)*query.people).toLocaleString()}円</span><span className="text-muted-ink">注意</span><span className="text-right font-medium">{chosen?.risk}</span></div></div><div className="grid gap-3 sm:grid-cols-3"><CheckCard icon={Clock3} title="日程" value="開催日時を固定"/><CheckCard icon={UtensilsCrossed} title="食事" value="店舗への確認が必要"/><CheckCard icon={Users} title="匿名性" value="必要情報だけ集約"/></div>{stage==="scheduled"?<div className="rounded-2xl bg-[#e8f0ea] p-4 text-sm text-[#24533f]"><div className="flex items-center gap-2 font-semibold"><CircleCheck className="size-5"/>予定ファイルを作成しました</div><p className="mt-1 pl-7 text-xs leading-5">カレンダーへ登録できます。外部店舗の予約APIは未接続のため、予約成立とは表示しません。</p></div>:completed?<div className="rounded-2xl bg-[#e8f0ea] p-4 text-sm text-[#24533f]"><div className="flex items-center gap-2 font-semibold"><CircleCheck className="size-5"/>{stage==="awaiting_approval"?"回答が揃い、最終承認待ちです":"参加者確認のデモです"}</div><p className="mt-1 pl-7 text-xs leading-5">操作は監査ログへ記録され、予約権限はまだ使用されていません。</p></div>:<div className="rounded-2xl bg-[#f4eee2] p-4 text-xs leading-5 text-[#75643f]">回答は会場評価に必要な形へ集約し、個人名や自由記述をOrca Routerへ送りません。</div>}</div><DialogFooter className="p-6 pt-2 sm:justify-between"><Button variant="outline" onClick={()=>setApprovalOpen(false)}>候補を見直す</Button><Button onClick={advanceWorkflow} className="bg-brand text-white hover:bg-brand-deep">{autonomy==="suggest"?"進め方を変更する":stage==="scheduled"?<><Download className="mr-2 size-4"/>予定を再取得</>:stage==="awaiting_approval"?"最終承認して予定作成":stage==="collecting"?"デモ回答を反映":"デモを開始"}</Button></DialogFooter></DialogContent></Dialog>
   </main>;
 }
 
@@ -306,7 +321,7 @@ function CheckCard({icon:Icon,title,value}:{icon:React.ElementType;title:string;
 function AgentAction({text,done,active}:{text:string;done?:boolean;active?:boolean}){return <div className="flex items-center gap-2.5"><span className={`grid size-5 place-items-center rounded-full ${done?"bg-sand text-brand":active?"bg-accent-bright text-white":"border border-white/25 text-white/65"}`}>{done?<Check className="size-3"/>:<span className="size-1.5 rounded-full bg-current"/>}</span><span className={active?"font-semibold":"text-white/70"}>{text}</span></div>}
 function SettingSwitch({label,description,checked,onCheckedChange}:{label:string;description:string;checked:boolean;onCheckedChange:(v:boolean)=>void}){return <div className="flex items-center justify-between gap-4 rounded-2xl border border-ink/10 bg-white p-4"><div><p className="text-sm font-semibold">{label}</p><p className="mt-1 text-xs text-muted-ink">{description}</p></div><Switch checked={checked} onCheckedChange={onCheckedChange}/></div>}
 function ScorePart({label,value}:{label:string;value:number}){return <div className="text-center"><p className="text-[10px] text-muted-ink">{label}</p><p className="mt-1 text-sm font-bold text-brand">{value}</p></div>}
-type SavedSession = {query?:Query; stage?:Stage; audit?:AuditEvent[]; eventDate?:string; eventTime?:string};
+type SavedSession = {query?:Query; stage?:Stage; audit?:AuditEvent[]; eventDate?:string; eventTime?:string; autonomy?:Autonomy};
 
 /** Returns only the parts of a stored session that are still valid; never throws. */
 function restoreSession(raw:string|null):SavedSession|null {
@@ -336,6 +351,8 @@ function restoreSession(raw:string|null):SavedSession|null {
   }
   if(isCalendarDate(v.eventDate))out.eventDate=v.eventDate as string;
   if(typeof v.eventTime==="string"&&/^([01]\d|2[0-3]):[0-5]\d$/.test(v.eventTime))out.eventTime=v.eventTime;
+  // A level stored by a build that still offered "execute" falls back to the default.
+  if((AUTONOMIES as readonly string[]).includes(String(v.autonomy)))out.autonomy=v.autonomy as Autonomy;
   return out;
 }
 
