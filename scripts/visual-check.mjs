@@ -39,12 +39,24 @@ for (const [name, width, height, mobile] of widths) {
       .filter((r) => r.width > 0);
     const truncated = [...document.querySelectorAll('.truncate')]
       .filter((el) => el.scrollWidth > el.clientWidth + 1).length;
+    // Tailwind v4 dropped cursor:pointer from its button preflight, which left every
+    // button in the app looking inert. An enabled control must read as pressable, and a
+    // disabled one must not.
+    const affordance = [...document.querySelectorAll('button, a[href], [role="button"], summary')]
+      .filter((el) => { const r = el.getBoundingClientRect(); return r.width > 4 && r.height > 4 })
+      .filter((el) => {
+        const cursor = getComputedStyle(el).cursor;
+        const off = el.hasAttribute('disabled') || el.getAttribute('aria-disabled') === 'true';
+        return off ? !['not-allowed', 'progress'].includes(cursor) : cursor !== 'pointer';
+      })
+      .map((el) => (el.getAttribute('aria-label') || el.textContent || '').trim().slice(0, 24));
     return {
       overflow: document.documentElement.scrollWidth - window.innerWidth,
       // A page that never hydrated leaves client-rendered values empty.
       hydrated: (document.querySelector('[role="combobox"]')?.textContent ?? 'n/a').trim().length > 0,
       styled: document.styleSheets.length > 0,
       truncated,
+      affordance,
       controlHeights: [...new Set(controls.map((r) => Math.round(r.height)))].sort((a, b) => a - b),
     };
   });
@@ -54,6 +66,7 @@ for (const [name, width, height, mobile] of widths) {
   if (!report.hydrated) problems.push('ハイドレーション未完了');
   if (!report.styled) problems.push('スタイルシート未適用');
   if (report.truncated > 0) problems.push(`文字切れ ${report.truncated} 件`);
+  if (report.affordance.length) problems.push(`カーソル不正 ${report.affordance.length} 件: ${report.affordance.slice(0, 3).join(' / ')}`);
   if (errors.length) problems.push(`コンソールエラー ${errors.length} 件: ${errors[0]}`);
 
   if (problems.length) failures += 1;
