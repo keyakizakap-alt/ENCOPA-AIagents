@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { NextRequest } from 'next/server';
 import { ALLERGENS,EMPTY_ALLERGY,type AllergyProfile,type Reservation } from '../group-types';
 import { database } from './db';
+import { openJson } from './crypto';
 import { cookieName,hash,HttpError,short } from './security';
 export function reservation(value:unknown):Reservation {
  if(!value||typeof value!=='object')throw new HttpError(400,'予約内容を入力してください。');
@@ -27,6 +28,6 @@ export async function snapshot(req:NextRequest,id:string){
  // the room polls this endpoint every 15 seconds per participant.
  const g=await group(id);const me=await member(req,id,false,g);const db=await database();
  const [members,messages]=await Promise.all([db.execute({sql:'SELECT id,name,role,allergy FROM encopa_members WHERE group_id=? ORDER BY created_at',args:[id]}),db.execute({sql:'SELECT * FROM (SELECT rowid AS seq,* FROM encopa_messages WHERE group_id=? ORDER BY created_at DESC,rowid DESC LIMIT 100) ORDER BY created_at,seq',args:[id]})]);
- return {id,title:g.title,reservation:JSON.parse(String(g.reservation)),version:Number(g.version),expiresAt:Number(g.expires_at),me:{id:me.id,name:me.name,role:me.role,allergy:JSON.parse(String(me.allergy))},members:members.rows.map(m=>({id:m.id,name:m.name,role:m.role,...(me.role==='owner'?{allergy:JSON.parse(String(m.allergy))}:{})})),messages:messages.rows.map(m=>({id:m.id,authorId:m.author_id,author:m.author,kind:m.kind,text:m.text,reservation:m.reservation?JSON.parse(String(m.reservation)):null,createdAt:Number(m.created_at)}))};
+ return {id,title:g.title,reservation:openJson(String(g.reservation)),version:Number(g.version),expiresAt:Number(g.expires_at),me:{id:me.id,name:me.name,role:me.role,allergy:openJson(String(me.allergy))},members:members.rows.map(m=>({id:m.id,name:m.name,role:m.role,...(me.role==='owner'?{allergy:openJson(String(m.allergy))}:{})})),messages:messages.rows.map(m=>({id:m.id,authorId:m.author_id,author:m.author,kind:m.kind,text:m.text,reservation:m.reservation?openJson(String(m.reservation)):null,createdAt:Number(m.created_at)}))};
 }
 export const newId=()=>randomUUID();

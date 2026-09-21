@@ -20,7 +20,7 @@ export function middleware(request: NextRequest) {
     "default-src 'self'",
     `script-src 'nonce-${nonce}' 'strict-dynamic' https: 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ''}`,
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob:",
+    "img-src 'self' data: blob: https://imgfp.hotp.jp",
     "font-src 'self'",
     `connect-src 'self'${isDev ? ' ws:' : ''}`,
     "frame-src 'none'",

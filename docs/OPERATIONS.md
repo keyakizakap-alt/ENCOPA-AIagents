@@ -19,54 +19,49 @@
 
 | event | 意味 |
 |---|---|
-| `agent_call_ok` | 外部モデル呼び出し成功。`dailyUsed` / `dailyLimit` で日次消費を確認できます |
-| `agent_call_failed` | 再試行後も失敗。`reason`（`orca_http_429` / `timeout` / `transport_error` など）と`consecutiveFailures`を確認 |
-| `agent_fallback` | ローカル評価へ切り替え。`reason`が`circuit_open`ならブレーカ作動中、`daily_limit`なら上限到達 |
-| `agent_cache_hit` | キャッシュ応答。外部呼び出しなし。`tier`が`memory`ならプロセス内、`shared`なら`encopa_ai_cache`由来 |
-| `agent_cache_read_failed` / `agent_cache_write_failed` | キャッシュ処理の失敗。リクエストは継続します（外部モデル呼び出しへ縮退） |
-| `agent_request_rejected` | ゲートウェイが4xxで拒否。`providerCode`（`code/type/param`）が原因を示します。最小構成で再試行します |
-| `agent_limit_unavailable` | 上限の計上自体に失敗（多くはDB障害）。安全側でローカル評価へ倒しています |
+| `agent_plan_ok` | 計画生成成功。`depth`（standard/detailed）と`calls`（消費した経路呼び出し数）を記録 |
+| `agent_cache_hit` | キャッシュ応答。外部呼び出しなし。`tier`が`shared`なら`encopa_agent_cache`由来 |
+| `agent_workflow_failed` | 計画生成に失敗。`reason`と`consecutiveFailures`を確認 |
+| `agent_specialists_failed` / `agent_synthesis_failed` | 詳細分析の一部が失敗し、標準計画へ縮退 |
+| `agent_cache_read_failed` / `agent_cache_write_failed` | キャッシュ処理の失敗。リクエストは継続します |
 | `request_failed` | 共有機能の想定外エラー。例外クラス名のみ記録します |
 
-利用者から申告されたエラーIDは、レスポンスの`traceId`および画面の「エラーID」と一致します。ログを`traceId`で検索してください。
+利用者から申告されたエラーIDは、レスポンスの`traceId`および画面の「エラーID」と一致します。
 
-`agent_call_failed`が連続3回に達すると60秒間、外部モデルの呼び出し自体を停止します（プロセス内メモリで保持するため、インスタンスごとに独立して動作します）。
+`agent_workflow_failed`が連続3回に達すると、`ENCOPA_AGENT_BREAKER_COOLDOWN_MS`（既定60秒）の間、外部呼び出し自体を停止します（プロセス内メモリで保持するため、インスタンスごとに独立して動作します）。
 
-`agent_limit_unavailable`が出ている場合はデータベース障害です。上限に達したわけではないので、`ENCOPA_AI_DAILY_LIMIT`を上げても解決しません。
-
-**APIキー投入直後に確認すること**：最初の検索で`agent_call_ok`が出れば正常です。`agent_request_rejected`が出た場合は`providerCode`の`param`が拒否されたパラメータ名を示します（最小構成での再試行も失敗した場合は、`app/api/agent/route.ts`の`buildRequest()`を調整してください）。`agent_call_failed`で`reason`が`orca_http_401`なら鍵、`orca_http_404`ならモデル名（`MODEL`定数）を確認してください。
+**APIキー投入直後に確認すること**：最初の検索で`agent_plan_ok`が出れば正常です。`reason`が`orca_http_401`なら鍵、`orca_http_404`なら`ORCAROUTER_MODEL`または`ORCAROUTER_BASE_URL`を確認してください。リクエスト形式が拒否された場合は最小構成（`temperature`なし・`response_format`なし・`max_completion_tokens`）で自動的に再試行します。
 
 ## キャッシュ運用
 
-`encopa_ai_cache`は候補評価の説明文のみを保持し、利用者データも検索条件の平文も含みません（キーはSHA-256ハッシュ）。TTLは10分です。
+`encopa_agent_cache`は生成された計画のみを保持し、利用者データも検索条件の平文も含みません（キーはSHA-256ハッシュ）。TTLは30分です。標準計画は経路呼び出し1回、詳細分析は最大4回を消費するため、キャッシュの効きがそのままコストに直結します。
 
-- プロンプト・モデル・サンプリング設定を変更したときは、`app/api/agent/route.ts`の`PROMPT_VERSION`を更新してください。旧プロンプト由来の説明が再利用されなくなります。
-- 不正な説明文が配信されている場合は、`DELETE FROM encopa_ai_cache;`で即時に無効化できます（次回リクエストから再生成されます）。
-- 期限切れ行は`pnpm db:cleanup`で削除します。
-
-`ENCOPA_AI_PROMPT_CACHE=1`にした場合は、`agent_call_ok`の`cachedTokens`が0より大きくなるかを確認してください。0のままなら、経由先モデルのキャッシュ最小長に届いていないため、有効化の意味はありません。
+- プロンプト・モデル・サンプリング設定を変更したときは、`app/api/agent/route.ts`の`PLAN_VERSION`を更新してください
+- 不正な計画が配信されている場合は`DELETE FROM encopa_agent_cache;`で即時無効化できます
+- 期限切れ行は書き込みの一部で自動削除されるほか、`pnpm db:cleanup`でも削除します
 
 ## 定期運用
 
-- 毎日：Vercel Functionの5xxとDB接続エラーを確認
-- 毎週：`pnpm db:cleanup`を実行し期限切れデータ（グループ・レート制限・キャッシュ）を削除
-- 毎月：依存関係の監査、Turso利用量、Orca Router利用量を確認
-- 毎月：`agent_call_ok`の`dailyUsed`を確認し、`ENCOPA_AI_DAILY_LIMIT`が実需に合っているか見直す
-- 秘密値漏えい時：Tursoトークン、作成コード、Orcaキーをローテーション
+- 毎日：Vercel Functionの5xx、DB接続エラー、OrcaRouterのエラー率を確認
+- 毎週：`pnpm db:cleanup`を実行し期限切れデータ（グループ・レート制限・計画キャッシュ）を削除
+- 毎月：依存関係の監査、Turso利用量、ホットペッパーWebサービス利用状況、OrcaRouter利用量を確認
+- 毎月：通常分析と詳細分析の比率、`ENCOPA_AGENT_DETAILED_DAILY_LIMIT`到達回数を確認し、詳細分析が恒常的に多い場合は判定条件と入力データ品質を見直す
+- 秘密値漏えい時：Tursoトークン、作成コード、ホットペッパーAPIキー、OrcaRouter APIキーをローテーションする。`ENCOPA_DATA_KEY`は先に既存データを復号・再暗号化する移行手順を用意し、単純な差し替えは行わない
 
 ## 本番スモークテスト
 
 - ホームがPCとスマートフォンで崩れない
+- 全国47都道府県から場所を選択して実在店舗を検索でき、提供元表記が表示される
+- 店舗画像、住所、アクセス情報、店舗ページ、Googleマップ、Appleマップが正しく表示される
+- 候補検索後に、プランアシスタントの比較結果・確認事項・次の行動が表示される
+- OrcaRouter停止時も実店舗候補を比較でき、誤ってAI分析済みと表示されない
+- 通常条件でOrcaRouter呼び出しが1回、食事配慮などの詳細確認条件で最大4回になる
 - グループ作成後に幹事画面へ遷移する
 - シークレットウィンドウで招待リンクから参加できる
-- 参加者が最新の予約内容と地図リンクを閲覧できる
+- 参加者が最新の予約内容、店舗住所、地図リンクを閲覧できる
 - 参加者は予約内容を編集できない
 - アレルギー詳細は本人と幹事だけが閲覧できる
 - 幹事が予約内容をチャットへ送れる
 - GoogleマップとAppleマップが入力住所を開く
 - 招待再発行後、旧リンクが拒否される
 - グループ削除後、URLが404になる
-- 存在しないURLで案内付きの404画面が表示される
-- ブラウザの開発者ツールでCSP違反が記録されていない（scriptがブロックされていれば画面が操作不能になります）
-- レスポンスヘッダのnonceと、HTML内の`<script nonce="...">`が一致している
-- キーボードのTab移動でフォーカスリングが全要素にはっきり表示される

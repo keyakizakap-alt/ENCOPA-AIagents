@@ -3,6 +3,7 @@ import { database } from '@/lib/server/db';
 import { allergy,group,member,newId,reservation,snapshot } from '@/lib/server/groups';
 import { cookieName,equal,failure,hash,HttpError,limit,readBody,result,sessionResponse,short,token } from '@/lib/server/security';
 import { EMPTY_ALLERGY } from '@/lib/group-types';
+import { sealJson } from '@/lib/server/crypto';
 export const runtime='nodejs';
 type Context={params:Promise<{id:string}>};
 export async function GET(req:NextRequest,ctx:Context){return failure(async()=>{const {id}=await ctx.params;return result(await snapshot(req,id))})}
@@ -14,7 +15,7 @@ export async function POST(req:NextRequest,ctx:Context){return failure(async()=>
   if(Number(g.invite_expires)<Date.now()||!equal(hash(invite),String(g.invite_hash)))throw new HttpError(403,'招待リンクが無効か期限切れです。幹事に再発行を依頼してください。');
   try{await member(req,id,false,g);return result({joined:true})}catch(e){if(!(e instanceof HttpError&&e.status===401))throw e}
   const name=short(body.name,30,'表示名'),session=token(),mid=newId(),now=Date.now();
-  const inserted=await db.execute({sql:`INSERT INTO encopa_members(id,group_id,name,role,session_hash,expires_at,allergy,created_at) SELECT ?,?,?,'member',?,?,?,? WHERE (SELECT COUNT(*) FROM encopa_members WHERE group_id=?)<200`,args:[mid,id,name,hash(session),now+30*86400000,JSON.stringify(EMPTY_ALLERGY),now,id]});
+  const inserted=await db.execute({sql:`INSERT INTO encopa_members(id,group_id,name,role,session_hash,expires_at,allergy,created_at) SELECT ?,?,?,'member',?,?,?,? WHERE (SELECT COUNT(*) FROM encopa_members WHERE group_id=?)<200`,args:[mid,id,name,hash(session),now+30*86400000,sealJson(EMPTY_ALLERGY),now,id]});
   if(!inserted.rowsAffected)throw new HttpError(409,'このグループは参加人数の上限に達しています。');
   return sessionResponse({joined:true},id,session);
  }
@@ -25,7 +26,7 @@ export async function POST(req:NextRequest,ctx:Context){return failure(async()=>
  }
  if(body.action==='profile'){
   const profile=allergy(body.allergy),name=short(body.name,30,'表示名');
-  await db.execute({sql:'UPDATE encopa_members SET name=?,allergy=? WHERE id=? AND group_id=?',args:[name,JSON.stringify(profile),String(me.id),id]});return result({ok:true});
+  await db.execute({sql:'UPDATE encopa_members SET name=?,allergy=? WHERE id=? AND group_id=?',args:[name,sealJson(profile),String(me.id),id]});return result({ok:true});
  }
  if(body.action==='leave'){
   if(me.role==='owner')throw new HttpError(409,'幹事はグループ終了から削除できます。');
@@ -35,7 +36,7 @@ export async function POST(req:NextRequest,ctx:Context){return failure(async()=>
  if(body.action==='reservation'){
   const booking=reservation(body.reservation);
   if(!Number.isInteger(body.version))throw new HttpError(400,'更新情報を確認してください。');
-  const updated=await db.execute({sql:'UPDATE encopa_groups SET reservation=?,version=version+1 WHERE id=? AND version=?',args:[JSON.stringify(booking),id,Number(body.version)]});
+  const updated=await db.execute({sql:'UPDATE encopa_groups SET reservation=?,version=version+1 WHERE id=? AND version=?',args:[sealJson(booking),id,Number(body.version)]});
   if(!updated.rowsAffected)throw new HttpError(409,'別の画面で内容が更新されました。再読み込みして確認してください。');return result({ok:true});
  }
  if(body.action==='share'){
