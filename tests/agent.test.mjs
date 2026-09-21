@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { createClient } from '@libsql/client';
 
 const base=process.env.TEST_BASE_URL||'http://localhost:3010';
@@ -136,6 +137,10 @@ test('the landing page renders its own styles and hydrates',async()=>{
  const css=await fetch(new URL(stylesheet,base));
  assert.equal(css.status,200,'the stylesheet is served');
  const text=await css.text();
- assert.ok(text.includes('#1f4b46'),'the brand colour survives the build');
+ // Read the expected value from the source rather than hardcoding it, so a deliberate
+ // palette change does not fail here while a stylesheet that never built still does.
+ const brand=/--brand:\s*(#[0-9a-f]{6})/i.exec(readFileSync('app/globals.css','utf8'))?.[1];
+ assert.ok(brand,'globals.css declares --brand');
+ assert.ok(text.includes(brand),`the brand colour ${brand} survives the build`);
  assert.ok(!/class(Name)?="[^"]*\b[a-z-]+-\[#[0-9a-f]{6}\]-/.test(html),'no malformed arbitrary-value class names');
 });
