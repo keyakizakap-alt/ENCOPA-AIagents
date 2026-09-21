@@ -39,6 +39,14 @@ for (const [name, width, height, mobile] of widths) {
       .filter((r) => r.width > 0);
     const truncated = [...document.querySelectorAll('.truncate')]
       .filter((el) => el.scrollWidth > el.clientWidth + 1).length;
+    // Controls that sit in one row must share a height. A shadcn trigger sets its own
+    // through a data-attribute variant, which quietly outranks a plain height class and
+    // leaves one box shorter than its neighbours.
+    const rowHeights = [...document.querySelectorAll('#conditions, [data-row="conditions"]')]
+      .flatMap((row) => [...row.querySelectorAll('input, [role="combobox"], button')]
+        .map((el) => Math.round(el.getBoundingClientRect().height))
+        .filter((h) => h > 0));
+    const uneven = [...new Set(rowHeights)];
     // Tailwind v4 dropped cursor:pointer from its button preflight, which left every
     // button in the app looking inert. An enabled control must read as pressable, and a
     // disabled one must not.
@@ -56,6 +64,7 @@ for (const [name, width, height, mobile] of widths) {
       hydrated: (document.querySelector('[role="combobox"]')?.textContent ?? 'n/a').trim().length > 0,
       styled: document.styleSheets.length > 0,
       truncated,
+      uneven,
       affordance,
       controlHeights: [...new Set(controls.map((r) => Math.round(r.height)))].sort((a, b) => a - b),
     };
@@ -66,6 +75,7 @@ for (const [name, width, height, mobile] of widths) {
   if (!report.hydrated) problems.push('ハイドレーション未完了');
   if (!report.styled) problems.push('スタイルシート未適用');
   if (report.truncated > 0) problems.push(`文字切れ ${report.truncated} 件`);
+  if (report.uneven.length > 1) problems.push(`検索条件の高さ不揃い: ${report.uneven.join('/')}px`);
   if (report.affordance.length) problems.push(`カーソル不正 ${report.affordance.length} 件: ${report.affordance.slice(0, 3).join(' / ')}`);
   if (errors.length) problems.push(`コンソールエラー ${errors.length} 件: ${errors[0]}`);
 

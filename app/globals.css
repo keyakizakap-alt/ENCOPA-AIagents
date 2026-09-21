@@ -67,6 +67,16 @@ body {
 }
 .font-serif { font-family: "Yu Mincho", "Hiragino Mincho ProN", Georgia, serif; }
 button, input { font: inherit; }
+/* Chrome paints its own background over an autofilled field, which made two boxes in the
+   search row read grey against their white neighbours. The inset shadow is the only way to
+   override it; -webkit-text-fill-color keeps the value legible on top. */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus {
+  -webkit-box-shadow: 0 0 0 1000px #fff inset;
+  -webkit-text-fill-color: #182523;
+  caret-color: #182523;
+}
 button:focus-visible, input:focus-visible, a:focus-visible, textarea:focus-visible, select:focus-visible {
   outline: 3px solid rgba(71, 118, 111, .38);
   outline-offset: 3px;
