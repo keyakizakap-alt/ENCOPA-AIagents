@@ -1,65 +1,128 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "../vendor/shadcn-tailwind-4.13.0.css";
-@utility scrollbar-none { scrollbar-width:none; &::-webkit-scrollbar{display:none;} }
-/* Japanese has no spaces, so a line may end between any two characters. line-break:strict
-   keeps small kana and punctuation off a line start, and auto-phrase - where the browser
-   supports it - breaks at phrase boundaries instead of mid-word. */
-@utility jp-text { line-break:strict; overflow-wrap:normal; text-wrap:pretty; }
-@supports (word-break:auto-phrase){ .jp-text{ word-break:auto-phrase } }
-:root{
- /* Warm, appetite-led palette taken from the approved mockup. Every text pair below is
-    measured against WCAG 2.2 AA: ink 15.3:1, muted-ink 5.5:1, white on brand 4.77:1. */
- --surface:#fdf6ef;
- --surface-raised:#fffaf5;
- --surface-sunk:#f6ece1;
- --ink:#211f1d;
- --muted-ink:#6b635c;
- --line:#ecdfd1;
- --brand:#d03e28;
- --brand-deep:#b03320;
- --brand-ink:#c03429;
- --brand-soft:#fdeae5;
- --accent:#ef8354;
- --accent-deep:#d9673b;
- --sand:#f0c48a;
- --gold:#f6d99b;
- --gold-ink:#5a4212;
- --positive:#2f7d55;
- --positive-soft:#e6f3ec;
- --caution:#8a6a2f;
- --caution-soft:#fbf0dc;
- --sidebar:#26231f;
- --sidebar-raised:#332f2a;
- --sidebar-ink:#f6f1ea;
- --sidebar-muted:#a89f95;
 
- /* shadcn surface contract, expressed through the tokens above. */
- --background:var(--surface);--foreground:var(--ink);--card:#fff;--card-foreground:var(--ink);
- --popover:#fff;--popover-foreground:var(--ink);--primary:var(--brand);--primary-foreground:#fff;
- --secondary:var(--surface-sunk);--secondary-foreground:var(--ink);--muted:var(--surface-sunk);--muted-foreground:var(--muted-ink);
- --accent-surface:var(--brand-soft);--accent-foreground:var(--brand-ink);--destructive:#b3261e;
- --border:var(--line);--input:#e3d5c6;--ring:var(--brand-ink);--radius:.9rem;
-}
-@theme inline{
- --color-surface:var(--surface);--color-surface-raised:var(--surface-raised);--color-surface-sunk:var(--surface-sunk);
- --color-ink:var(--ink);--color-muted-ink:var(--muted-ink);--color-line:var(--line);
- --color-brand:var(--brand);--color-brand-deep:var(--brand-deep);--color-brand-ink:var(--brand-ink);--color-brand-soft:var(--brand-soft);
- --color-accent-warm:var(--accent);--color-accent-deep:var(--accent-deep);--color-sand:var(--sand);
- --color-gold:var(--gold);--color-gold-ink:var(--gold-ink);
- --color-positive:var(--positive);--color-positive-soft:var(--positive-soft);--color-caution:var(--caution);--color-caution-soft:var(--caution-soft);
- --color-sidebar:var(--sidebar);--color-sidebar-raised:var(--sidebar-raised);--color-sidebar-ink:var(--sidebar-ink);--color-sidebar-muted:var(--sidebar-muted);
- --color-background:var(--background);--color-foreground:var(--foreground);--color-card:var(--card);--color-card-foreground:var(--card-foreground);--color-popover:var(--popover);--color-popover-foreground:var(--popover-foreground);--color-primary:var(--primary);--color-primary-foreground:var(--primary-foreground);--color-secondary:var(--secondary);--color-secondary-foreground:var(--secondary-foreground);--color-muted:var(--muted);--color-muted-foreground:var(--muted-foreground);--color-accent:var(--accent-surface);--color-accent-foreground:var(--accent-foreground);--color-destructive:var(--destructive);--color-border:var(--border);--color-input:var(--input);--color-ring:var(--ring);--radius-sm:calc(var(--radius) - 4px);--radius-md:calc(var(--radius) - 2px);--radius-lg:var(--radius);--radius-xl:calc(var(--radius) + 4px);--font-sans:"Hiragino Sans","Yu Gothic UI","Yu Gothic",system-ui,sans-serif;
+@utility scrollbar-none {
+  scrollbar-width: none;
+  &::-webkit-scrollbar { display: none; }
 }
 
-*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--background);color:var(--foreground);font-family:var(--font-sans)}.font-serif{font-family:"Yu Mincho","Hiragino Mincho ProN",Georgia,serif}button,input{font:inherit}button:focus-visible,input:focus-visible{outline:3px solid rgba(80,126,119,.35);outline-offset:2px}
-@media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.01ms!important;transition-duration:.01ms!important}}
-.enc-input{display:block;width:100%;min-width:0;border:1px solid var(--input);border-radius:12px;background:white;padding:11px 12px;font-size:16px;color:var(--ink);line-height:1.5}.enc-primary,.enc-secondary{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;border-radius:12px;padding:10px 16px;font-size:14px;font-weight:600;cursor:pointer}.enc-primary{background:var(--brand);color:#fff}.enc-primary:hover{background:var(--brand-deep)}.enc-secondary{border:1px solid var(--input);background:#fff;color:var(--brand-ink)}.enc-secondary:hover{background:var(--brand-soft)}
-/* Tailwind v4 no longer sets cursor:pointer on buttons in its preflight, so every button
-   in the app read as non-interactive. Links and .enc-primary had it; nothing else did. */
-button:not(:disabled),[role="button"]:not([aria-disabled="true"]),summary{cursor:pointer}
-/* A disabled control is unavailable, not loading: wait implied the latter. It also has to
-   look unavailable - the orange share button still read as a live call to action at .55. */
-button:disabled,[aria-disabled="true"]{cursor:not-allowed;opacity:.5;filter:saturate(.35)}
-[aria-busy="true"]{cursor:progress}
-a:focus-visible,textarea:focus-visible,select:focus-visible{outline:3px solid var(--ring);outline-offset:3px}
+:root {
+  --background: #f7f5ef;
+  --foreground: #182523;
+  --card: #ffffff;
+  --card-foreground: #182523;
+  --popover: #ffffff;
+  --popover-foreground: #182523;
+  --primary: #173f3a;
+  --primary-foreground: #fffdf7;
+  --secondary: #eee9dd;
+  --secondary-foreground: #182523;
+  --muted: #eeeae0;
+  --muted-foreground: #65716e;
+  --accent: #e5eee9;
+  --accent-foreground: #173f3a;
+  --destructive: #b43a32;
+  --border: #d9d7cf;
+  --input: #cfcec6;
+  --ring: #47766f;
+  --radius: .9rem;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --font-sans: "Hiragino Sans", "Yu Gothic UI", "Yu Gothic", system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  background: #f7f5ef;
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-feature-settings: "palt" 1;
+  text-rendering: optimizeLegibility;
+}
+.font-serif { font-family: "Yu Mincho", "Hiragino Mincho ProN", Georgia, serif; }
+button, input { font: inherit; }
+button:focus-visible, input:focus-visible, a:focus-visible, textarea:focus-visible, select:focus-visible {
+  outline: 3px solid rgba(71, 118, 111, .38);
+  outline-offset: 3px;
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: .01ms !important;
+    transition-duration: .01ms !important;
+  }
+}
+.enc-input {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #d4d4cd;
+  border-radius: 14px;
+  background: white;
+  padding: 11px 13px;
+  font-size: 16px;
+  color: #182523;
+  line-height: 1.5;
+  transition: border-color .2s, box-shadow .2s;
+}
+.enc-input:hover { border-color: #aeb6b1; }
+.enc-input:focus { border-color: #47766f; box-shadow: 0 0 0 4px rgba(71, 118, 111, .1); }
+.enc-primary, .enc-secondary {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 13px;
+  padding: 10px 16px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform .2s, background-color .2s, border-color .2s, box-shadow .2s;
+}
+.enc-primary { background: #173f3a; color: white; box-shadow: 0 8px 20px rgba(23, 63, 58, .16); }
+.enc-primary:hover { background: #0e332f; transform: translateY(-1px); }
+.enc-secondary { border: 1px solid #d4d4cd; background: white; color: #173f3a; }
+.enc-secondary:hover { border-color: #9fb0aa; background: #eef3f0; }
+/* Tailwind v4 dropped cursor:pointer from its button preflight, so every control outside
+   .enc-* read as inert. Restored here rather than per component, where it drifts. */
+button:not(:disabled), [role="button"]:not([aria-disabled="true"]), summary { cursor: pointer; }
+button:disabled, [aria-disabled="true"] { opacity: .55; cursor: not-allowed; transform: none !important; }
+[aria-busy="true"] { cursor: progress; }
+
+/* 日本語の行分割。行頭に置けない記号を守り、対応ブラウザでは文節で折ります。
+   これが無いと、狭い段でタイトルが一文字ずつ折れます。 */
+@utility jp-text {
+  line-break: strict;
+  overflow-wrap: normal;
+  text-wrap: pretty;
+}
+@supports (word-break: auto-phrase) {
+  .jp-text { word-break: auto-phrase; }
+}

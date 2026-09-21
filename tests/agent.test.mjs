@@ -139,8 +139,11 @@ test('the landing page renders its own styles and hydrates',async()=>{
  const text=await css.text();
  // Read the expected value from the source rather than hardcoding it, so a deliberate
  // palette change does not fail here while a stylesheet that never built still does.
- const brand=/--brand:\s*(#[0-9a-f]{6})/i.exec(readFileSync('app/globals.css','utf8'))?.[1];
- assert.ok(brand,'globals.css declares --brand');
+ const brand=/--primary:\s*(#[0-9a-f]{6})/i.exec(readFileSync('app/globals.css','utf8'))?.[1];
+ assert.ok(brand,'globals.css declares --primary');
  assert.ok(text.includes(brand),`the brand colour ${brand} survives the build`);
+ // jp-text is what keeps Japanese headings from breaking a character at a time; if the
+ // utility is dropped from the build, the headings silently go back to that.
+ assert.ok(text.includes('line-break:strict')||text.includes('line-break: strict'),'the jp-text utility survives the build');
  assert.ok(!/class(Name)?="[^"]*\b[a-z-]+-\[#[0-9a-f]{6}\]-/.test(html),'no malformed arbitrary-value class names');
 });
