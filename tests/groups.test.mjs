@@ -4,6 +4,10 @@ const base=process.env.TEST_BASE_URL||'http://localhost:3010';
 const createKey=process.env.TEST_CREATE_KEY||'local-integration-test-only';
 const booking={venueName:'テスト会場（架空）',address:'東京都千代田区丸の内1丁目',date:'2026-12-18',time:'19:00',people:8,price:5000,status:'planning',bookingReference:'',note:'テスト用の予約情報',website:'https://example.com'};
 async function call(path,body,cookie,origin=base){const r=await fetch(`${base}${path}`,{method:body?'POST':'GET',headers:{...(body?{'Content-Type':'application/json','Origin':origin}:{}),...(cookie?{Cookie:cookie}:{})},body:body?JSON.stringify(body):undefined});return {status:r.status,body:await r.json(),cookie:r.headers.get('set-cookie')?.split(';')[0]};}
+test('venue search validates input and keeps the provider key server-side',async()=>{
+ const invalid=await call('/api/venues',{purpose:'会食',area:'長崎駅',budget:999,people:4,priority:'balance',privateRoom:false,dietary:false});assert.equal(invalid.status,400);
+ const unavailable=await call('/api/venues',{purpose:'会食',area:'長崎駅',budget:5000,people:4,priority:'balance',privateRoom:false,dietary:false});assert.equal(unavailable.status,503);assert.match(unavailable.body.error,/設定/);
+});
 test('group membership, allergies, chat, reservation sharing and revocation',async t=>{
  const bad=await call('/api/groups',{title:'test',name:'test',reservation:booking,createKey:'bad'});assert.equal(bad.status,403);
  const created=await call('/api/groups',{title:'統合テスト用グループ',name:'幹事テスト',reservation:booking,createKey});assert.equal(created.status,200,JSON.stringify(created.body));const {id,invite}=created.body;const owner=created.cookie,path=`/api/groups/${id}`;

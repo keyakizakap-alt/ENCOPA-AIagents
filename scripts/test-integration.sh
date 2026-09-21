@@ -20,7 +20,7 @@ export ENCOPA_CREATE_KEY="local-integration-test-only"
 export APP_ORIGIN="$test_base"
 export TEST_BASE_URL="$test_base"
 export TEST_CREATE_KEY="$ENCOPA_CREATE_KEY"
-export ORCAROUTER_API_KEY=""
+export HOTPEPPER_API_KEY=""
 
 node node_modules/next/dist/bin/next start --hostname 127.0.0.1 --port "$test_port" >"${test_dir}/server.log" 2>&1 &
 server_pid="$!"
