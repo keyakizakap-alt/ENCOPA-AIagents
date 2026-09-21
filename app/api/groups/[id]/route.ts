@@ -1,6 +1,6 @@
 import type { NextRequest } from 'next/server';
 import { database } from '@/lib/server/db';
-import { allergy,group,member,newId,reservation,snapshot } from '@/lib/server/groups';
+import { allergy,attendance,group,member,newId,reservation,snapshot } from '@/lib/server/groups';
 import { cookieName,equal,failure,hash,HttpError,limit,readBody,result,sessionResponse,short,token } from '@/lib/server/security';
 import { EMPTY_ALLERGY } from '@/lib/group-types';
 import { sealJson } from '@/lib/server/crypto';
@@ -25,8 +25,14 @@ export async function POST(req:NextRequest,ctx:Context){return failure(async()=>
   await db.execute({sql:"INSERT OR IGNORE INTO encopa_messages(id,group_id,author_id,author,kind,text,created_at,request_key) VALUES(?,?,?,?,'text',?,?,?)",args:[newId(),id,String(me.id),String(me.name),text,Date.now(),requestKey]});return result({ok:true});
  }
  if(body.action==='profile'){
-  const profile=allergy(body.allergy),name=short(body.name,30,'表示名');
-  await db.execute({sql:'UPDATE encopa_members SET name=?,allergy=? WHERE id=? AND group_id=?',args:[name,sealJson(profile),String(me.id),id]});return result({ok:true});
+  const profile=allergy(body.allergy),name=short(body.name,30,'表示名'),affiliation=short(body.affiliation??'',40,'所属',false);
+  await db.execute({sql:'UPDATE encopa_members SET name=?,allergy=?,affiliation=? WHERE id=? AND group_id=?',args:[name,sealJson(profile),affiliation,String(me.id),id]});return result({ok:true});
+ }
+ if(body.action==='rsvp'){
+  // Attendance is the member's own to set - never the organiser's on their behalf, so no
+  // memberId is accepted here. answered_at records only when, not what was answered before.
+  const value=attendance(body.rsvp);
+  await db.execute({sql:'UPDATE encopa_members SET rsvp=?,answered_at=? WHERE id=? AND group_id=?',args:[value,value==='pending'?0:Date.now(),String(me.id),id]});return result({ok:true});
  }
  if(body.action==='leave'){
   if(me.role==='owner')throw new HttpError(409,'幹事はグループ終了から削除できます。');
