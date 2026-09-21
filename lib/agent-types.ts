@@ -7,6 +7,7 @@ export type VenueAgentAdvice = {
 export type AgentPlan = {
   available: true;
   traceId: string;
+  analysisDepth: "standard" | "detailed";
   recommendedVenueId: string;
   summary: string;
   venueAdvice: VenueAgentAdvice[];
