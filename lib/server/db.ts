@@ -41,6 +41,12 @@ export async function database() {
     // Holds only generated ranking commentary keyed by a hash of the search criteria - no member data.
     `CREATE TABLE IF NOT EXISTS encopa_ai_cache(key TEXT PRIMARY KEY,summary TEXT NOT NULL,model TEXT,created_at INTEGER NOT NULL,expires_at INTEGER NOT NULL)`,
     `CREATE INDEX IF NOT EXISTS encopa_ai_cache_expiry ON encopa_ai_cache(expires_at)`,
+    // The provider call depends only on the prefecture and the party size, so one stored
+    // response serves every budget, priority and purpose asked about the same area. Rows
+    // are kept past expires_at on purpose: an expired row is what the route serves when the
+    // provider is down, rather than failing the search outright.
+    `CREATE TABLE IF NOT EXISTS encopa_venue_cache(key TEXT PRIMARY KEY,payload TEXT NOT NULL,created_at INTEGER NOT NULL,expires_at INTEGER NOT NULL)`,
+    `CREATE INDEX IF NOT EXISTS encopa_venue_cache_created ON encopa_venue_cache(created_at)`,
   ],'write').then(()=>added(client!)).catch(e=>{initialized=undefined;throw e});
   await initialized;
   return client;

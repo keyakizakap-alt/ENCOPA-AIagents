@@ -51,6 +51,9 @@ pnpm dev
 | `ORCAROUTER_MODEL` | 任意 | 既定値はOrcaRouterがモデルを選ぶ`auto` |
 | `ENCOPA_AGENT_DAILY_LIMIT` | 任意 | 1日あたりの分析ワークフロー上限。既定100 |
 | `ENCOPA_AGENT_DETAILED_DAILY_LIMIT` | 任意 | 1日あたりの詳細分析上限。既定30。上限後も標準分析は継続 |
+| `ENCOPA_VENUE_DAILY_LIMIT` | 任意 | 1日あたりの店舗検索API呼び出し上限。既定1000。上限後は保存済みの応答で返すか停止します |
+| `ENCOPA_VENUE_IP_HOURLY_LIMIT` | 任意 | 1IPあたりの店舗検索上限。既定30回/時 |
+| `ENCOPA_VENUE_BREAKER_COOLDOWN_MS` | 任意 | 連続失敗後に呼び出しを止める時間。既定60000 |
 
 秘密値に`NEXT_PUBLIC_`を付けないでください。Vercelのローカルファイルシステムは永続化されないため、本番で`file:`データベースは使用できません。
 
