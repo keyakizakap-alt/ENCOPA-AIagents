@@ -3,22 +3,6 @@ import { useState } from "react";
 import type { AgentFailureReason, AgentPlan } from "@/lib/agent-types";
 import { CircleCheck, Compass, Copy, ListChecks, MessageSquareText, RefreshCw, ShieldAlert, ShieldCheck, Sparkles } from "lucide-react";
 
-/**
- * 種別ごとの、運用者が次に何をすればよいかの説明。鍵や接続先そのものは出しません。
- */
-const FAILURE_HINTS: Record<string, string> = {
-  not_configured: "接続設定が未完了です。ORCAROUTER_API_KEY と接続先の設定を確認してください。",
-  circuit_open: "失敗が続いたため呼び出しを一時停止しています。しばらく待つと自動で再開します。",
-  provider_auth: "AI経路が資格情報を拒否しました。APIキーを確認してください。",
-  provider_not_found: "AI経路で接続先またはモデル名が見つかりません。ORCAROUTER_MODEL と ORCAROUTER_BASE_URL を確認してください。",
-  provider_rate_limited: "AI経路の利用上限に達しました。時間をおいて再度お試しください。",
-  provider_unavailable: "AI経路に接続できませんでした。提供元の稼働状況を確認してください。",
-  provider_rejected: "AI経路がリクエスト内容を拒否しました。モデルの対応形式を確認してください。",
-  provider_timeout: "AI経路からの応答が制限時間内に返りませんでした。",
-  provider_bad_response: "AI経路の応答を読み取れませんでした。モデルの設定を確認してください。",
-  budget_spent: "本日の分析上限に達しました。",
-};
-
 export function AgentInsight({ status, plan, error, failure }: { status: "idle" | "running" | "ready" | "error"; plan: AgentPlan | null; error: string; failure?: { reason?: AgentFailureReason | string; traceId?: string } | null }) {
   if (status === "idle") return null;
   if (status === "running") return <section aria-live="polite" className="mt-5 rounded-[24px] border border-[#211f1d]/10 bg-white p-5 shadow-sm sm:p-6">
@@ -26,17 +10,13 @@ export function AgentInsight({ status, plan, error, failure }: { status: "idle" 
     <div className="mt-5 grid gap-3 sm:grid-cols-3"><AgentStep icon={Compass} text="会場の相性を比較"/><AgentStep icon={ShieldCheck} text="確認漏れを点検"/><AgentStep icon={MessageSquareText} text="共有内容を整理"/></div>
   </section>;
   if (status === "error") {
-    const hint = failure?.reason ? FAILURE_HINTS[failure.reason] : undefined;
+    // 原因の種別と追跡IDは画面に出しません。利用者には関係のない情報で、
+    // 出せば読む人を選ばず不安にさせるだけです。応答の reason と
+    // サーバーの agent_workflow_failed には残してあるので、運用者は追えます。
+    if (failure?.reason) console.info("[encopa] agent unavailable", { reason: failure.reason, traceId: failure.traceId });
     return <div role="status" className="mt-5 rounded-2xl border border-[#f0c48a] bg-[#fbf0dc] p-4 text-sm text-[#8a6a2f]">
       <p className="font-semibold">店舗候補は表示できました</p>
       <p className="jp-text mt-1 leading-6">{error} 候補の選択や店舗ページの確認はそのまま利用できます。</p>
-      {/* 原因の種別と追跡ID。ログを読めない環境でも、運用者がここから切り分けられます。 */}
-      {(hint || failure?.traceId) && <p className="jp-text mt-3 border-t border-[#e3cfa4] pt-3 text-xs leading-5 text-[#7a5f2a]">
-        <span className="font-semibold">管理者向け</span>
-        {hint && <> — {hint}</>}
-        {failure?.reason && <> <span className="font-mono">({failure.reason})</span></>}
-        {failure?.traceId && <><br />エラーID: <span className="font-mono">{failure.traceId}</span></>}
-      </p>}
     </div>;
   }
   if (!plan) return null;
