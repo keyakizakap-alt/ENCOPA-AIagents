@@ -4,7 +4,6 @@
 
 | | |
 |---|---|
-| デモ | https://encopa-a-iagents.vercel.app |
 | 動かすもの | 全国47都道府県の**実在する店舗**（ホットペッパーグルメWebサービス） |
 | 使っているAI | OrcaRouter経由の多段エージェント（統括→専門担当→再統合） |
 | 技術構成 | Next.js 16 / React 19 / TypeScript / Tailwind CSS v4 / Turso (libSQL) / Vercel |
