@@ -100,23 +100,27 @@ export async function POST(request: NextRequest) {
       deadline,
     );
     breaker.failures = 0;
+    let routedCalls = 1;
     const review = reviewDecision(coordinator.value, context);
     const decisions: AgentDecision[] = [{ step: "単独で比較", detail: `${candidates.length}件の候補を1回の呼び出しで比較しました` }];
 
     // 直しは1回だけ。通らない計画を往復させても費用が増えるだけです。
-    const revise = (issues: string[], current: AgentPlan) => callOrca(
+    const revise = (issues: string[], current: AgentPlan) => {
+      routedCalls += 1;
+      return callOrca(
       apiKey,
       `あなたは宴会プランの統括担当です。${sharedRules}提出した計画に不備が見つかりました。指摘された点だけを直し、同じJSON形式で返してください。JSON形式: {recommendedVenueId:string,summary:string,venueAdvice:[{venueId:string,score:number,reason:string}],confirmationChecklist:string[],nextActions:string[],shareDraft:string}。recommendedVenueIdとvenueAdviceのvenueIdは入力候補のIDだけを使う。予約が成立したとは書かない。`,
       { context, currentPlan: { summary: current.summary, venueAdvice: current.venueAdvice, confirmationChecklist: current.confirmationChecklist, nextActions: current.nextActions, shareDraft: current.shareDraft, recommendedVenueId: current.recommendedVenueId }, issues },
       650,
       deadline,
-    ).catch(() => null);
+      ).catch(() => null);
+    };
 
     if (!review.detailed) {
       decisions.push({ step: "深さを判断", detail: "追加確認は不要と判断し、1回で完了しました" });
       const plan = await finalizePlan(coordinator.value, candidates, traceId, [coordinator.resolvedModel], "standard", decisions, context, revise);
       await writeCache(key, plan, traceId);
-      log("agent_plan_ok", { traceId, depth: "standard", calls: 1, selfCheckIssues: plan.selfCheck.issues });
+      log("agent_plan_ok", { traceId, depth: "standard", calls: routedCalls, selfCheckIssues: plan.selfCheck.issues });
       return planResponse(plan);
     }
     decisions.push({
@@ -131,7 +135,7 @@ export async function POST(request: NextRequest) {
       decisions.push({ step: "予算の上限", detail: "本日の詳細確認の上限に達したため、標準の計画で返しました" });
       const plan = await finalizePlan(coordinator.value, candidates, traceId, [coordinator.resolvedModel], "standard", decisions, context, revise);
       await writeCache(key, plan, traceId);
-      log("agent_plan_ok", { traceId, depth: "standard", calls: 1, reason: "detailed_budget_spent" });
+      log("agent_plan_ok", { traceId, depth: "standard", calls: routedCalls, reason: "detailed_budget_spent" });
       return planResponse(plan);
     }
 
@@ -152,6 +156,7 @@ export async function POST(request: NextRequest) {
 
     const selectedSpecialists = selectSpecialists(specialistPrompts, context);
 
+    routedCalls += selectedSpecialists.length;
     const specialistResults = await Promise.allSettled(
       selectedSpecialists.map((agent) => callOrca(apiKey, `${agent.role}です。${sharedRules}${agent.task}`, context, 450, deadline)),
     );
@@ -161,12 +166,13 @@ export async function POST(request: NextRequest) {
       decisions.push({ step: "縮退", detail: "専門担当が応答しなかったため、標準の計画に戻しました" });
       const plan = await finalizePlan(coordinator.value, candidates, traceId, [coordinator.resolvedModel], "standard", decisions, context, revise);
       await writeCache(key, plan, traceId);
-      logError("agent_specialists_failed", { traceId, requested: selectedSpecialists.length });
+      logError("agent_specialists_failed", { traceId, requested: selectedSpecialists.length, calls: routedCalls });
       return planResponse(plan);
     }
 
     let synthesis: OrcaResult;
     try {
+      routedCalls += 1;
       synthesis = await callOrca(
         apiKey,
         `あなたは宴会プランの統括担当です。${sharedRules}専門担当の結果を矛盾なく統合してください。JSON形式: {recommendedVenueId:string,summary:string,venueAdvice:[{venueId:string,score:number,reason:string}],confirmationChecklist:string[],nextActions:string[],shareDraft:string}。recommendedVenueIdとvenueAdviceのvenueIdは入力候補のIDだけを使う。`,
@@ -178,14 +184,14 @@ export async function POST(request: NextRequest) {
       decisions.push({ step: "縮退", detail: "統合に失敗したため、最初の比較結果に戻しました" });
       const plan = await finalizePlan(coordinator.value, candidates, traceId, [coordinator.resolvedModel, ...completed.map((result) => result.resolvedModel)], "standard", decisions, context, revise);
       await writeCache(key, plan, traceId);
-      logError("agent_synthesis_failed", { traceId, specialists: completed.length });
+      logError("agent_synthesis_failed", { traceId, specialists: completed.length, calls: routedCalls });
       return planResponse(plan);
     }
 
     decisions.push({ step: "統合", detail: `${completed.length}名の結果を突き合わせ、ひとつの計画にまとめました` });
     const plan = await finalizePlan(synthesis.value, candidates, traceId, [coordinator, ...completed, synthesis].map((result) => result.resolvedModel), "detailed", decisions, context, revise);
     await writeCache(key, plan, traceId);
-    log("agent_plan_ok", { traceId, depth: "detailed", calls: 2 + completed.length, selfCheckIssues: plan.selfCheck.issues });
+    log("agent_plan_ok", { traceId, depth: "detailed", calls: routedCalls, selfCheckIssues: plan.selfCheck.issues });
     return planResponse(plan);
   } catch (error) {
     if (error instanceof HttpError) return NextResponse.json({ available: false, traceId, error: error.message, reason: httpFailureReason(error) }, { status: error.status, headers: { "Cache-Control": "no-store" } });
@@ -234,7 +240,7 @@ async function callOrca(apiKey: string, system: string, payload: unknown, maxTok
 async function attemptOrca(apiKey: string, system: string, payload: unknown, maxTokens: number, timeoutMs: number, compatibility: boolean): Promise<OrcaResult> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  const model = process.env.ORCAROUTER_MODEL?.trim() || "auto";
+  const model = process.env.ORCAROUTER_MODEL?.trim() || "orcarouter/auto";
   const messages = [{ role: "system", content: system }, { role: "user", content: JSON.stringify(payload) }];
   try {
     const response = await fetch(`${orcaBaseUrl()}/chat/completions`, {
@@ -254,7 +260,7 @@ async function attemptOrca(apiKey: string, system: string, payload: unknown, max
     if (!value) throw new Error("orca_invalid_json");
     return {
       value,
-      resolvedModel: clean(response.headers.get("x-orca-resolved-model") || data.model || "auto", 100),
+      resolvedModel: clean(response.headers.get("x-orca-resolved-model") || data.model || "orcarouter/auto", 100),
     };
   } finally {
     clearTimeout(timeout);
