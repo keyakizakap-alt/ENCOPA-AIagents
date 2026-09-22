@@ -75,9 +75,9 @@ export async function POST(request: NextRequest) {
 
     const context = { purpose, area, budget, people, priority, privateRoom, dietary, candidates };
 
-    // A standard plan costs one routed call and a detailed one up to four, so an identical
-    // re-run is the most expensive thing this route can repeat. Checked before the limits:
-    // a cached answer spends no budget.
+    // A standard plan normally costs one routed call and a detailed one normally four.
+    // Deterministic self-check may add exactly one correction call, so the true maxima are
+    // two and five. Checked before the limits: a cached answer spends no budget.
     const key = planKey(context);
     const cached = readMemoryCache(key) ?? await readSharedCache(key, traceId);
     if (cached) return planResponse({ ...cached, traceId });
@@ -108,16 +108,16 @@ export async function POST(request: NextRequest) {
     const revise = (issues: string[], current: AgentPlan) => {
       routedCalls += 1;
       return callOrca(
-      apiKey,
+        apiKey,
       `あなたは宴会プランの統括担当です。${sharedRules}提出した計画に不備が見つかりました。指摘された点だけを直し、同じJSON形式で返してください。JSON形式: {recommendedVenueId:string,summary:string,venueAdvice:[{venueId:string,score:number,reason:string}],confirmationChecklist:string[],nextActions:string[],shareDraft:string}。recommendedVenueIdとvenueAdviceのvenueIdは入力候補のIDだけを使う。予約が成立したとは書かない。`,
-      { context, currentPlan: { summary: current.summary, venueAdvice: current.venueAdvice, confirmationChecklist: current.confirmationChecklist, nextActions: current.nextActions, shareDraft: current.shareDraft, recommendedVenueId: current.recommendedVenueId }, issues },
-      650,
-      deadline,
+        { context, currentPlan: { summary: current.summary, venueAdvice: current.venueAdvice, confirmationChecklist: current.confirmationChecklist, nextActions: current.nextActions, shareDraft: current.shareDraft, recommendedVenueId: current.recommendedVenueId }, issues },
+        650,
+        deadline,
       ).catch(() => null);
     };
 
     if (!review.detailed) {
-      decisions.push({ step: "深さを判断", detail: "追加確認は不要と判断し、1回で完了しました" });
+      decisions.push({ step: "深さを判断", detail: "専門担当による追加確認は不要と判断しました" });
       const plan = await finalizePlan(coordinator.value, candidates, traceId, [coordinator.resolvedModel], "standard", decisions, context, revise);
       await writeCache(key, plan, traceId);
       log("agent_plan_ok", { traceId, depth: "standard", calls: routedCalls, selfCheckIssues: plan.selfCheck.issues });
