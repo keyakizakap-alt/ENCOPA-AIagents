@@ -4,8 +4,32 @@ export type VenueAgentAdvice = {
   reason: string;
 };
 
-/** エージェントが実際に行った判断。モデルの出力ではなく、実行の記録です。 */
-export type AgentDecision = { step: string; detail: string };
+export type AgentAction =
+  | "ANALYZE_CANDIDATES"
+  | "CHECK_CONSTRAINTS"
+  | "RUN_SPECIALISTS"
+  | "SYNTHESIZE"
+  | "SELF_CHECK"
+  | "FINALIZE";
+
+/** エージェントが実際に行った判断。思考過程ではなく、検証可能な実行記録です。 */
+export type AgentDecision = {
+  step: string;
+  detail: string;
+  action?: AgentAction;
+  status?: "completed" | "limited" | "blocked";
+};
+
+export type AgentRunSummary = {
+  stepsUsed: number;
+  maxSteps: number;
+  llmCalls: number;
+  maxLlmCalls: number;
+  specialistsUsed: number;
+  maxSpecialists: number;
+  /** 外部への書き込みはAgentが実行せず、人が画面から承認する。 */
+  approvalRequired: string[];
+};
 
 /** 条件をいくつの候補が満たしているか。数はすべてこちらで数えます。 */
 export type AgentConstraint = { label: string; met: number; total: number; relaxable: boolean };
@@ -22,6 +46,7 @@ export type AgentPlan = {
   selfCheck: { issues: number; revised: boolean };
   /** 自己検証を通せなかった場合はlow。低い確信を隠さず示します。 */
   confidence: "high" | "low";
+  run: AgentRunSummary;
   recommendedVenueId: string;
   summary: string;
   venueAdvice: VenueAgentAdvice[];

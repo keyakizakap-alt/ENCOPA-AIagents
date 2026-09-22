@@ -201,12 +201,16 @@ test('the run record reports the depth decision and who was asked', async () => 
  assert.equal(r.status, 200, JSON.stringify(r.body));
  assert.equal(r.body.analysisDepth, 'detailed');
  const steps = r.body.decisions.map((d) => d.step);
- assert.ok(steps.includes('単独で比較'), JSON.stringify(steps));
- assert.ok(steps.includes('専門担当を選ぶ'), JSON.stringify(steps));
+ assert.ok(steps.includes('目的と候補を理解'), JSON.stringify(steps));
+ assert.ok(steps.includes('専門Agentを実行'), JSON.stringify(steps));
  // The conditions force the review even though the mock coordinator says it is unnecessary.
- const depth = r.body.decisions.find((d) => d.step === '深さを判断');
- assert.match(depth.detail, /条件から追加確認を必須と判定/);
+ const depth = r.body.decisions.find((d) => d.step === '次の行動を決定');
+ assert.match(depth.detail, /条件ルールが追加確認を要求/);
  assert.match(depth.detail, /食事上の配慮|大人数/);
+ assert.deepEqual([r.body.run.specialistsUsed,r.body.run.maxSpecialists],[2,2]);
+ assert.ok(r.body.run.llmCalls<=r.body.run.maxLlmCalls,'LLM calls remain inside the hard budget');
+ assert.ok(r.body.run.stepsUsed<=r.body.run.maxSteps,'agent steps remain inside the hard budget');
+ assert.ok(r.body.run.approvalRequired.some((item)=>item.includes('予約')),'external writes require a person');
 });
 
 test('a failure reports a coarse reason an operator can act on', async () => {

@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | 動かすもの | 全国47都道府県の**実在する店舗**（ホットペッパーグルメWebサービス） |
-| 使っているAI | OrcaRouter経由の多段エージェント（統括→専門担当→再統合） |
+| 使っているAI | OrcaRouter経由の制約付きAIエージェント（判断→Tool実行→観察→再判断） |
 | 技術構成 | Next.js 16 / React 19 / TypeScript / Tailwind CSS v4 / Turso (libSQL) / Vercel |
 
 ---
@@ -46,6 +46,16 @@ ENCOPAは、この一連を1画面につなぎます。
 
 モデルが返した店舗IDは、こちらが渡した候補リストに含まれるものだけを採用します。存在しないIDを返しても無視されます。
 
+### 次の行動を選ぶAgent loop
+
+Coordinator Agentは回答を一気に作るだけでなく、現在の条件から`FINALIZE`または`RUN_SPECIALISTS`を選びます。提案されたActionはSchema相当の型検証とPolicy Gateを通過したものだけがTool Registryへ渡り、専門AgentのObservationを受けたCoordinatorが最終案へ再統合します。
+
+```text
+Goal → Coordinator → Policy Gate → Tool → Observation → Coordinator → Final
+```
+
+実行は最大4ステップで終了します。内部の思考過程は表示せず、実際に実行したAction、LLM呼び出し数、専門Agent数だけを画面の「エージェントの進行」に表示します。
+
 ### AIを使わないという判断（プロンプトインジェクション対策）
 
 参加者へのお知らせ文は、**モデルを使わず**予約内容と出欠の集計だけから組み立てます。参加者が書いた表示名・所属・アレルギーの補足は文面の材料にしません。
@@ -82,7 +92,7 @@ AI分析は、条件が単純なら**Coordinatorの1回**で済ませます。�
 
 | 検証 | 内容 |
 |---|---|
-| `pnpm test` | **37件**。一時DBと本番ビルドを起動し、権限分離・CSRF・再試行・ブレーカー・縮退・1日上限を実際に通します |
+| `pnpm test` | **42件**。一時DBと本番ビルドを起動し、権限分離・CSRF・Agent loop・コスト上限・再試行・ブレーカー・縮退・1日上限を実際に通します |
 | `pnpm visual-check` | 320 / 390 / 834 / 1280 / 1536px **＋ダークモード**でブラウザ描画し、横スクロール・未ハイドレート・文字切れ・カーソル不正・コントロールの高さと背景の不揃いを検出 |
 | `pnpm lint` / `typecheck` / `build` | 型・静的解析・本番ビルド |
 
@@ -178,7 +188,7 @@ pnpm dev
 
 ## 候補分析のコスト管理
 
-標準計画は通常1回、詳細分析は通常4回の経路呼び出しを使います。自己検証で不備を検出した場合だけ、修正のために1回追加されるため、最大はStandard 2回 / Detailed 5回です。3段の歯止めがあります。
+標準計画は通常1回、詳細分析は通常4回の経路呼び出しを使います。自己検証で不備を検出した場合だけ、修正のために1回追加されるため、最大はStandard 2回 / Detailed 5回です。さらにAgent loop自体を最大4ステップ、専門Agentを最大2つに固定しています。
 
 | 仕組み | 既定 | 挙動 |
 |---|---|---|
@@ -254,6 +264,10 @@ pnpm audit --prod
 app/page.tsx                    候補比較とグループ作成
 app/api/venues/route.ts         実店舗検索、入力検証、候補スコアリング
 app/api/agent/route.ts          OrcaRouterを使った標準分析と条件付きの専門分析
+lib/agent/runner.ts             Observe → Decide → Actを最大4ステップで実行
+lib/agent/policy.ts             Actionのリスク分類と外部操作の承認ゲート
+lib/agent/tools.ts              条件に応じて選ぶ専門AgentのTool Registry
+lib/agent/state.ts              Agent状態とLLM・ステップ・専門Agentの上限
 components/encopa/agent-insight.tsx  分析状況、確認事項、次の行動
 app/groups/[id]/page.tsx        予約内容・参加者・チャット画面
 app/api/groups/route.ts         グループ作成

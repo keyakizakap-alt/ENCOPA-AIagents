@@ -1,13 +1,13 @@
 "use client";
 import { useState } from "react";
 import type { AgentFailureReason, AgentPlan } from "@/lib/agent-types";
-import { CircleCheck, Compass, Copy, ListChecks, MessageSquareText, RefreshCw, ShieldAlert, ShieldCheck, Sparkles } from "lucide-react";
+import { Bot, CircleCheck, Compass, Copy, Gauge, ListChecks, LockKeyhole, MessageSquareText, RefreshCw, ShieldAlert, ShieldCheck, Sparkles } from "lucide-react";
 
 export function AgentInsight({ status, plan, error, failure }: { status: "idle" | "running" | "ready" | "error"; plan: AgentPlan | null; error: string; failure?: { reason?: AgentFailureReason | string; traceId?: string } | null }) {
   if (status === "idle") return null;
   if (status === "running") return <section aria-live="polite" className="mt-5 rounded-[24px] border border-[#211f1d]/10 bg-white p-5 shadow-sm sm:p-6">
-    <div className="flex items-center gap-3"><span className="grid size-10 place-items-center rounded-xl bg-[#fdeae5] text-[#d03e28]"><RefreshCw className="size-5 animate-spin"/></span><div><p className="font-semibold">候補を詳しく比較しています</p><p className="mt-1 text-sm text-[#6b635c]">会場条件、予約前の注意点、共有内容をそれぞれ確認中です。</p></div></div>
-    <div className="mt-5 grid gap-3 sm:grid-cols-3"><AgentStep icon={Compass} text="会場の相性を比較"/><AgentStep icon={ShieldCheck} text="確認漏れを点検"/><AgentStep icon={MessageSquareText} text="共有内容を整理"/></div>
+    <div className="flex items-center gap-3"><span className="grid size-10 place-items-center rounded-xl bg-[#fdeae5] text-[#d03e28]"><RefreshCw className="size-5 animate-spin"/></span><div><p className="font-semibold">ENCOPA Agentが進めています</p><p className="mt-1 text-sm text-[#6b635c]">条件を理解し、必要な処理と専門Agentを選択しています。</p></div></div>
+    <div className="mt-5 grid gap-3 sm:grid-cols-3"><AgentStep icon={Compass} text="次の行動を判断"/><AgentStep icon={Bot} text="必要な専門Agentを起動"/><AgentStep icon={ShieldCheck} text="結果を自己検証"/></div>
   </section>;
   if (status === "error") {
     // 原因の種別と追跡IDは画面に出しません。利用者には関係のない情報で、
@@ -21,7 +21,7 @@ export function AgentInsight({ status, plan, error, failure }: { status: "idle" 
   }
   if (!plan) return null;
   return <section aria-label="候補分析結果" className="mt-5 overflow-hidden rounded-[24px] border border-[#211f1d]/10 bg-white shadow-sm">
-    <div className="border-b border-[#211f1d]/10 bg-[#d03e28] p-5 text-white sm:p-6"><div className="flex items-center gap-2 text-sm font-semibold text-[#f0c48a]"><Compass className="size-4"/>プランアシスタント</div><p className="mt-3 max-w-3xl text-base leading-7 text-white/85">{plan.summary}</p></div>
+    <div className="border-b border-[#211f1d]/10 bg-[#d03e28] p-5 text-white sm:p-6"><div className="flex items-center gap-2 text-sm font-semibold text-[#f0c48a]"><Bot className="size-4"/>ENCOPA Agent</div><p className="mt-3 max-w-3xl text-base leading-7 text-white/85">{plan.summary}</p></div>
     <div className="grid gap-6 p-5 sm:p-6 lg:grid-cols-2">
       <div><div className="flex items-center gap-2 font-semibold"><ListChecks className="size-4 text-[#d03e28]"/>予約前に確認すること</div><ul className="mt-4 space-y-3">{plan.confirmationChecklist.map((item)=><li key={item} className="flex gap-2 text-sm leading-6 text-[#6b635c]"><CircleCheck className="mt-1 size-4 shrink-0 text-[#2f7d55]"/>{item}</li>)}</ul></div>
       <div><div className="flex items-center gap-2 font-semibold"><Compass className="size-4 text-[#d03e28]"/>次に進めること</div><ol className="mt-4 space-y-3">{plan.nextActions.map((item,index)=><li key={item} className="flex gap-3 text-sm leading-6 text-[#6b635c]"><span className="grid size-6 shrink-0 place-items-center rounded-full bg-[#f6ece1] text-xs font-semibold text-[#d03e28]">{index+1}</span>{item}</li>)}</ol></div>
@@ -52,6 +52,15 @@ function AgentRun({ plan }: { plan: AgentPlan }) {
         </li>)}</ol>
       </div>
       <div className="flex flex-col gap-4">
+        <div className="rounded-2xl border border-[#182523]/10 bg-[#f7f5ef] p-4">
+          <div className="flex items-center gap-2 text-sm font-semibold"><Gauge className="size-4 text-[#b55c38]"/>実行コストの上限</div>
+          <dl className="mt-3 grid grid-cols-3 gap-2 text-center">
+            <RunMetric label="処理" value={`${plan.run.stepsUsed}/${plan.run.maxSteps}`}/>
+            <RunMetric label="LLM" value={`${plan.run.llmCalls}/${plan.run.maxLlmCalls}`}/>
+            <RunMetric label="専門Agent" value={`${plan.run.specialistsUsed}/${plan.run.maxSpecialists}`}/>
+          </dl>
+          <p className="jp-text mt-3 text-xs leading-5 text-[#65716e]">単純な条件では追加Agentを呼ばず、必要な場合だけ専門分析へ進みます。</p>
+        </div>
         {plan.constraints.length>0&&<div>
           <div className="flex items-center gap-2 font-semibold"><ListChecks className="size-4 text-[#b55c38]"/>条件を満たす候補</div>
           <dl className="mt-3 space-y-2">{plan.constraints.map((item)=><div key={item.label} className="flex items-baseline justify-between gap-3 rounded-xl bg-[#f7f5ef] px-3 py-2">
@@ -68,9 +77,17 @@ function AgentRun({ plan }: { plan: AgentPlan }) {
               : plan.selfCheck.revised?"不備を見つけ、自分で1回修正して解消しました。":"候補データと突き合わせ、不備がないことを確認しました。"}
           </p>
         </div>
+        <div className="rounded-2xl border border-[#d7c7aa] bg-[#fffaf0] p-4">
+          <div className="flex items-center gap-2 text-sm font-semibold"><LockKeyhole className="size-4 text-[#8a6330]"/>人が承認する操作</div>
+          <p className="jp-text mt-1 text-xs leading-5 text-[#655943]">{plan.run.approvalRequired.join("・")}は自動実行しません。内容を確認した幹事だけが進められます。</p>
+        </div>
       </div>
     </div>
   </div>;
+}
+
+function RunMetric({ label, value }: { label: string; value: string }) {
+  return <div className="rounded-xl bg-white px-2 py-3"><dt className="text-[10px] font-semibold text-[#7b8582]">{label}</dt><dd className="mt-1 text-sm font-black tabular-nums text-[#173f3a]">{value}</dd></div>;
 }
 
 /**

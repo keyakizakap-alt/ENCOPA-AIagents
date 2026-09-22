@@ -1,5 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import type { AgentConstraint, AgentDecision, AgentFailureReason, AgentPlan, VenueAgentAdvice } from "@/lib/agent-types";
+import { runAgent } from "@/lib/agent/runner";
+import { AGENT_LIMITS, type Candidate, type ModelResult } from "@/lib/agent/state";
 import { database } from "@/lib/server/db";
 import { hash, HttpError, limit, log, logError, readBody, short } from "@/lib/server/security";
 
@@ -8,7 +10,7 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 /** Bump when a prompt, the model or the sampling parameters change: it keys the cache. */
-const PLAN_VERSION = "v2";
+const PLAN_VERSION = "v3";
 const CACHE_TTL_MS = 30 * 60 * 1000;
 const MEMORY_CACHE_MAX_ENTRIES = 100;
 /** Consecutive transport/5xx failures after which routed calls stop for the cooldown. */
@@ -23,30 +25,7 @@ type CacheEntry = { plan: AgentPlan; expiresAt: number };
 const memoryCache = new Map<string, CacheEntry>();
 const breaker = { failures: 0, openedAt: 0 };
 
-type Candidate = {
-  id: string;
-  name: string;
-  genre: string;
-  address: string;
-  access: string;
-  budgetLabel: string;
-  estimatedPrice: number | null;
-  partyCapacity: number | null;
-  privateRoom: boolean;
-  freeDrink: boolean;
-  course: boolean;
-  nonSmoking: string;
-  openingHours: string;
-  closed: string;
-  deterministicScore: number;
-};
-
-type OrcaResult = { value: Record<string, unknown>; resolvedModel: string };
-
-type ReviewDecision = {
-  detailed: boolean;
-  reasons: string[];
-};
+type OrcaResult = ModelResult;
 
 const sharedRules = [
   "入力された店舗情報だけを事実として扱う",
@@ -92,107 +71,33 @@ export async function POST(request: NextRequest) {
       limit("agent-global-daily", dailyLimit, 86400),
     ]);
     const deadline = Date.now() + WORKFLOW_DEADLINE_MS;
-    const coordinator = await callOrca(
-      apiKey,
-      `あなたは宴会プランの統括担当です。${sharedRules}まず単独で店舗候補を比較し、予約前の確認事項と次の行動まで回答してください。入力だけでは判断が難しく、専門担当による再確認が必要な場合だけneedsSpecialistReviewをtrueにしてください。JSON形式: {recommendedVenueId:string,summary:string,venueAdvice:[{venueId:string,score:number,reason:string}],confirmationChecklist:string[],nextActions:string[],shareDraft:string,needsSpecialistReview:boolean,reviewReasons:string[]}。recommendedVenueIdとvenueAdviceのvenueIdは入力候補のIDだけを使う。`,
+    const result = await runAgent({
       context,
-      650,
-      deadline,
-    );
-    breaker.failures = 0;
-    let routedCalls = 1;
-    const review = reviewDecision(coordinator.value, context);
-    const decisions: AgentDecision[] = [{ step: "単独で比較", detail: `${candidates.length}件の候補を1回の呼び出しで比較しました` }];
-
-    // 直しは1回だけ。通らない計画を往復させても費用が増えるだけです。
-    const revise = (issues: string[], current: AgentPlan) => {
-      routedCalls += 1;
-      return callOrca(
-        apiKey,
-      `あなたは宴会プランの統括担当です。${sharedRules}提出した計画に不備が見つかりました。指摘された点だけを直し、同じJSON形式で返してください。JSON形式: {recommendedVenueId:string,summary:string,venueAdvice:[{venueId:string,score:number,reason:string}],confirmationChecklist:string[],nextActions:string[],shareDraft:string}。recommendedVenueIdとvenueAdviceのvenueIdは入力候補のIDだけを使う。予約が成立したとは書かない。`,
-        { context, currentPlan: { summary: current.summary, venueAdvice: current.venueAdvice, confirmationChecklist: current.confirmationChecklist, nextActions: current.nextActions, shareDraft: current.shareDraft, recommendedVenueId: current.recommendedVenueId }, issues },
-        650,
-        deadline,
-      ).catch(() => null);
-    };
-
-    if (!review.detailed) {
-      decisions.push({ step: "深さを判断", detail: "専門担当による追加確認は不要と判断しました" });
-      const plan = await finalizePlan(coordinator.value, candidates, traceId, [coordinator.resolvedModel], "standard", decisions, context, revise);
-      await writeCache(key, plan, traceId);
-      log("agent_plan_ok", { traceId, depth: "standard", calls: routedCalls, selfCheckIssues: plan.selfCheck.issues });
-      return planResponse(plan);
-    }
-    decisions.push({
-      step: "深さを判断",
-      detail: `${coordinator.value.needsSpecialistReview === true ? "エージェント自身が追加確認を要求" : "条件から追加確認を必須と判定"}：${review.reasons.slice(0, 3).join("、") || "判断材料が不足"}`,
+      traceId,
+      sharedRules,
+      callModel: (system, payload, maxTokens) => callOrca(apiKey, system, payload, maxTokens, deadline),
+      reserveDetailedBudget: async () => {
+        try {
+          await limit("agent-detailed-daily", envInteger("ENCOPA_AGENT_DETAILED_DAILY_LIMIT", 30, 1, 10000), 86400);
+          return true;
+        } catch (error) {
+          if (error instanceof HttpError && error.status === 429) return false;
+          throw error;
+        }
+      },
+      finalize: (raw, models, depth, decisions, revise) => finalizePlan(raw, candidates, traceId, models, depth, decisions, context, revise),
+      onDegrade: (event, detail) => logError(`agent_${event}`, { traceId, ...detail }),
     });
-
-    try {
-      await limit("agent-detailed-daily", envInteger("ENCOPA_AGENT_DETAILED_DAILY_LIMIT", 30, 1, 10000), 86400);
-    } catch (error) {
-      if (!(error instanceof HttpError) || error.status !== 429) throw error;
-      decisions.push({ step: "予算の上限", detail: "本日の詳細確認の上限に達したため、標準の計画で返しました" });
-      const plan = await finalizePlan(coordinator.value, candidates, traceId, [coordinator.resolvedModel], "standard", decisions, context, revise);
-      await writeCache(key, plan, traceId);
-      log("agent_plan_ok", { traceId, depth: "standard", calls: routedCalls, reason: "detailed_budget_spent" });
-      return planResponse(plan);
-    }
-
-    const specialistPrompts = [
-      {
-        role: "会場比較担当",
-        task: "目的、人数、予算、個室、アクセスの観点で全店舗を比較する。JSON形式: {summary:string, ranking:[{venueId:string,score:number,reason:string}]}。scoreは0〜100。",
-      },
-      {
-        role: "予約リスク確認担当",
-        task: "不足情報と予約前に店舗へ確認すべき事項を抽出する。JSON形式: {warnings:string[], checklist:string[]}。アレルギー対応可否は判断しない。",
-      },
-      {
-        role: "会食進行担当",
-        task: "幹事が次に行う作業と参加者向け共有文を作る。JSON形式: {nextActions:string[], shareDraft:string}。予約したとは書かない。",
-      },
-    ];
-
-    const selectedSpecialists = selectSpecialists(specialistPrompts, context);
-
-    routedCalls += selectedSpecialists.length;
-    const specialistResults = await Promise.allSettled(
-      selectedSpecialists.map((agent) => callOrca(apiKey, `${agent.role}です。${sharedRules}${agent.task}`, context, 450, deadline)),
-    );
-    const completed = specialistResults.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
-    decisions.push({ step: "専門担当を選ぶ", detail: `${selectedSpecialists.map((agent) => agent.role).join("・")}に確認させました` });
-    if (!completed.length) {
-      decisions.push({ step: "縮退", detail: "専門担当が応答しなかったため、標準の計画に戻しました" });
-      const plan = await finalizePlan(coordinator.value, candidates, traceId, [coordinator.resolvedModel], "standard", decisions, context, revise);
-      await writeCache(key, plan, traceId);
-      logError("agent_specialists_failed", { traceId, requested: selectedSpecialists.length, calls: routedCalls });
-      return planResponse(plan);
-    }
-
-    let synthesis: OrcaResult;
-    try {
-      routedCalls += 1;
-      synthesis = await callOrca(
-        apiKey,
-        `あなたは宴会プランの統括担当です。${sharedRules}専門担当の結果を矛盾なく統合してください。JSON形式: {recommendedVenueId:string,summary:string,venueAdvice:[{venueId:string,score:number,reason:string}],confirmationChecklist:string[],nextActions:string[],shareDraft:string}。recommendedVenueIdとvenueAdviceのvenueIdは入力候補のIDだけを使う。`,
-        { context, initialAssessment: coordinator.value, reviewReasons: review.reasons, specialistResults: completed.map((result) => result.value) },
-        650,
-        deadline,
-      );
-    } catch {
-      decisions.push({ step: "縮退", detail: "統合に失敗したため、最初の比較結果に戻しました" });
-      const plan = await finalizePlan(coordinator.value, candidates, traceId, [coordinator.resolvedModel, ...completed.map((result) => result.resolvedModel)], "standard", decisions, context, revise);
-      await writeCache(key, plan, traceId);
-      logError("agent_synthesis_failed", { traceId, specialists: completed.length, calls: routedCalls });
-      return planResponse(plan);
-    }
-
-    decisions.push({ step: "統合", detail: `${completed.length}名の結果を突き合わせ、ひとつの計画にまとめました` });
-    const plan = await finalizePlan(synthesis.value, candidates, traceId, [coordinator, ...completed, synthesis].map((result) => result.resolvedModel), "detailed", decisions, context, revise);
-    await writeCache(key, plan, traceId);
-    log("agent_plan_ok", { traceId, depth: "detailed", calls: routedCalls, selfCheckIssues: plan.selfCheck.issues });
-    return planResponse(plan);
+    breaker.failures = 0;
+    await writeCache(key, result.plan, traceId);
+    log("agent_plan_ok", {
+      traceId,
+      depth: result.plan.analysisDepth,
+      calls: result.llmCalls,
+      specialists: result.specialistsUsed,
+      selfCheckIssues: result.plan.selfCheck.issues,
+    });
+    return planResponse(result.plan);
   } catch (error) {
     if (error instanceof HttpError) return NextResponse.json({ available: false, traceId, error: error.message, reason: httpFailureReason(error) }, { status: error.status, headers: { "Cache-Control": "no-store" } });
     breaker.failures += 1;
@@ -323,6 +228,15 @@ function normalizePlan(value: Record<string, unknown>, candidates: Candidate[], 
     constraints: extras?.constraints ?? [],
     selfCheck: extras?.selfCheck ?? { issues: 0, revised: false },
     confidence: extras?.confidence ?? "high",
+    run: {
+      stepsUsed: 0,
+      maxSteps: AGENT_LIMITS.maxSteps,
+      llmCalls: 0,
+      maxLlmCalls: AGENT_LIMITS.maxLlmCalls,
+      specialistsUsed: 0,
+      maxSpecialists: AGENT_LIMITS.maxSpecialists,
+      approvalRequired: ["参加者への共有", "店舗への予約・キャンセル"],
+    },
   };
 }
 
@@ -404,30 +318,6 @@ function constraintReport(candidates: Candidate[], context: { people: number; bu
   ];
   if (context.privateRoom) rows.unshift({ label: "個室あり", met: candidates.filter((c) => c.privateRoom).length, total, relaxable: true });
   return rows;
-}
-
-function reviewDecision(value: Record<string, unknown>, context: { people: number; privateRoom: boolean; dietary: boolean; candidates: Candidate[] }): ReviewDecision {
-  const sorted = [...context.candidates].sort((a, b) => b.deterministicScore - a.deterministicScore);
-  const closeScores = sorted.length > 1 && sorted[0].deterministicScore - sorted[1].deterministicScore <= 5;
-  const missingFacts = context.candidates.some((candidate) => candidate.estimatedPrice === null || candidate.partyCapacity === null);
-  const unmetPrivateRoom = context.privateRoom && !context.candidates.some((candidate) => candidate.privateRoom);
-  const modelRequested = value.needsSpecialistReview === true;
-  const reasons = [
-    ...(context.dietary ? ["食事上の配慮について店舗確認が必要"] : []),
-    ...(context.people >= 20 ? ["大人数の受け入れ条件を確認する必要がある"] : []),
-    ...(closeScores ? ["候補の評価が僅差"] : []),
-    ...(missingFacts ? ["比較に必要な店舗情報が不足"] : []),
-    ...(unmetPrivateRoom ? ["個室条件を満たす候補が未確認"] : []),
-    ...(modelRequested ? stringList(value.reviewReasons, 3, 120) : []),
-  ];
-  return { detailed: modelRequested || reasons.length > 0, reasons: [...new Set(reasons)].slice(0, 5) };
-}
-
-function selectSpecialists<T extends { role: string }>(specialists: T[], context: { people: number; dietary: boolean; candidates: Candidate[] }) {
-  const selected = [specialists[0]];
-  const reservationRisk = context.dietary || context.people >= 20 || context.candidates.some((candidate) => candidate.estimatedPrice === null || candidate.partyCapacity === null);
-  selected.push(reservationRisk ? specialists[1] : specialists[2]);
-  return selected.filter((specialist): specialist is T => Boolean(specialist));
 }
 
 function planResponse(plan: AgentPlan) {
