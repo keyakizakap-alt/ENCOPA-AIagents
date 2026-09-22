@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import { CreateGroup } from "@/components/encopa/create-group";
+import { GroupHub } from "@/components/encopa/group-hub";
 import { AllergyPicker } from "@/components/encopa/allergy-picker";
 import { AgentInsight } from "@/components/encopa/agent-insight";
 import { MapLinks, VenueMap } from "@/components/encopa/maps";
@@ -28,7 +29,7 @@ import { Switch } from "@/components/ui/switch";
 type Priority = "balance" | "conversation" | "cost" | "access";
 type Query = { purpose:string; area:string; prefectureCode:string; budget:number; people:number; priority:Priority; privateRoom:boolean; dietary:boolean };
 type Stage = "draft" | "ranked" | "collecting" | "awaiting_approval" | "scheduled";
-type View = "home" | "venues" | "participants" | "suggestions" | "history";
+type View = "home" | "venues" | "groups" | "suggestions" | "history";
 const STAGES: readonly string[] = ["draft","ranked","collecting","awaiting_approval","scheduled"];
 type AuditEvent = { id:string; label:string; detail:string; at:number };
 
@@ -38,7 +39,7 @@ const priorityLabels: Record<Priority,string> = { balance:"バランス", conver
 const navItems: {view:View;label:string;icon:React.ElementType}[] = [
   {view:"home",label:"ホーム",icon:HomeIcon},
   {view:"venues",label:"会場候補",icon:Search},
-  {view:"participants",label:"参加者",icon:Users},
+  {view:"groups",label:"グループ",icon:Users},
   {view:"suggestions",label:"提案",icon:Lightbulb},
   {view:"history",label:"履歴",icon:History},
 ];
@@ -206,7 +207,7 @@ export default function Home() {
   useEffect(()=>{
     const syncView=()=>{
       const value=new URLSearchParams(window.location.search).get("view");
-      const next=navItems.some(item=>item.view===value)?value as View:"home";
+      const next=value==="participants"?"groups":navItems.some(item=>item.view===value)?value as View:"home";
       setActiveView(next);
     };
     syncView();
@@ -340,13 +341,16 @@ export default function Home() {
             <div className="mt-5 grid gap-2 [grid-template-columns:repeat(auto-fit,minmax(min(100%,230px),1fr))]">
               <TodoRow done={searched} label="条件を決めて候補を出す" onClick={()=>navigate("home")}/>
               <TodoRow done={candidates.length>0&&picked} label="会場候補を確認する" onClick={()=>navigate("venues")}/>
-              <TodoRow done={stageIndex>2} label="参加者に連絡する" onClick={()=>navigate("participants")}/>
+              <TodoRow done={stageIndex>2} label="参加者に連絡する" onClick={()=>navigate("groups")}/>
               <TodoRow done={stage==="scheduled"} label="予約内容を確定する" onClick={()=>setApprovalOpen(true)}/>
             </div>
           </div>
         </div></section>}
 
-        {activeView==="participants"&&<section><ScreenHeading eyebrow="PARTICIPANTS" title="参加者と連絡" description="予約内容、出欠、アレルギー確認、グループチャットをまとめて管理します。"/>{chosen?<><div className="grid gap-5 lg:grid-cols-[.75fr_1.25fr]"><div className="rounded-[24px] border border-[#182523]/8 bg-white p-5"><p className="text-xs font-bold text-[#b55c38]">共有する予約内容</p><h2 className="mt-2 break-keep text-xl font-bold">{chosen.name}</h2><p className="mt-2 text-sm leading-6 text-[#65716e]">{chosen.address}</p><div className="mt-4"><MapLinks address={chosen.address}/></div><div className="mt-5 grid grid-cols-2 gap-x-3 gap-y-4"><MiniStat label="日時" value={`${eventDate.slice(5).replace("-","/")} ${eventTime}`}/><MiniStat label="人数" value={`${query.people}名`}/><MiniStat label="予算目安" value={chosen.budgetLabel}/><MiniStat label="候補順位" value={`${selected+1}位`}/><MiniStat label="アクセス" value={chosen.access||"—"}/><MiniStat label="食事の配慮" value={hasAllergy?`${allergy.items.length}項目`:allergy.status==="none"?"なし":"未設定"}/></div><p className="jp-text mt-5 text-xs leading-5 text-[#77807e]">空席とアレルギー対応は、予約前に店舗へ直接ご確認ください。</p></div><div className="flex flex-col rounded-[24px] border border-[#182523]/8 bg-[#fff8f2] p-5"><div className="flex items-start gap-3"><span className="grid size-11 shrink-0 place-items-center rounded-2xl bg-[#df5542] text-white"><MessageCircle className="size-5"/></span><div><h2 className="text-xl font-bold">グループを作成して共有</h2><p className="jp-text mt-2 text-sm leading-6 text-[#65716e]">作成後は専用画面へ移動し、参加者ごとの予約確認とグループチャットを利用できます。</p></div></div>
+        {activeView==="groups"&&<section>
+          <ScreenHeading eyebrow="GROUPS" title="グループと参加者" description="作成・参加したグループを開き、予約内容、出欠、アレルギー確認、チャットを管理します。"/>
+          <GroupHub/>
+          {chosen?<><div className="grid gap-5 lg:grid-cols-[.75fr_1.25fr]"><div className="rounded-[24px] border border-[#182523]/8 bg-white p-5"><p className="text-xs font-bold text-[#b55c38]">新しいグループで共有する内容</p><h2 className="mt-2 break-keep text-xl font-bold">{chosen.name}</h2><p className="mt-2 text-sm leading-6 text-[#65716e]">{chosen.address}</p><div className="mt-4"><MapLinks address={chosen.address}/></div><div className="mt-5 grid grid-cols-2 gap-x-3 gap-y-4"><MiniStat label="日時" value={`${eventDate.slice(5).replace("-","/")} ${eventTime}`}/><MiniStat label="人数" value={`${query.people}名`}/><MiniStat label="予算目安" value={chosen.budgetLabel}/><MiniStat label="候補順位" value={`${selected+1}位`}/><MiniStat label="アクセス" value={chosen.access||"—"}/><MiniStat label="食事の配慮" value={hasAllergy?`${allergy.items.length}項目`:allergy.status==="none"?"なし":"未設定"}/></div><p className="jp-text mt-5 text-xs leading-5 text-[#77807e]">空席とアレルギー対応は、予約前に店舗へ直接ご確認ください。</p></div><div className="flex flex-col rounded-[24px] border border-[#182523]/8 bg-[#fff8f2] p-5"><div className="flex items-start gap-3"><span className="grid size-11 shrink-0 place-items-center rounded-2xl bg-[#df5542] text-white"><MessageCircle className="size-5"/></span><div><h2 className="text-xl font-bold">新しいグループを作成</h2><p className="jp-text mt-2 text-sm leading-6 text-[#65716e]">作成後はこの画面の「参加中のグループ」から、いつでも専用画面を開けます。</p></div></div>
               <p className="mt-5 text-xs font-bold tracking-[.12em] text-[#b55c38]">グループを作る前に送れるもの</p>
               <p className="jp-text mt-3 max-h-64 flex-1 overflow-y-auto whitespace-pre-wrap rounded-2xl border border-[#182523]/8 bg-white p-4 text-sm leading-7 text-[#293432]">{announcement}</p>
               <div className="mt-3 grid gap-2 sm:grid-cols-3">
@@ -357,7 +361,15 @@ export default function Home() {
               {shareStatus&&<p role="status" className="mt-2 text-xs leading-5 text-[#65716e]">{shareStatus}</p>}
               </div></div><CreateGroup title={`${query.purpose}のグループ`} initial={{venueName:chosen.name,address:chosen.address,date:eventDate,time:eventTime,people:query.people,price:chosen.estimatedPrice||query.budget,status:"planning",bookingReference:"",note:"",website:chosen.url}}/></>:<EmptyScreen icon={Users} title="先に会場候補を選んでください" description="参加者へ共有する店舗を選ぶと、グループを作成できます。" action="会場候補へ" onClick={()=>navigate("venues")}/>}</section>}
 
-        {activeView==="suggestions"&&<section><ScreenHeading eyebrow="ENCOPA SUGGESTION" title="プランへの提案" description="検索条件と候補店を整理し、次に確認すべき内容を表示します。"/>{searched?<><AgentInsight status={agentStatus} plan={agentPlan} error={agentError} failure={agentFailure}/><div className="mt-5 rounded-[24px] border border-[#182523]/8 bg-white p-5"><h2 className="text-lg font-bold">次のアクション</h2><div className="mt-4 grid gap-3 sm:grid-cols-3"><CheckCard icon={Search} title="候補を比較" value={`${candidates.length}件から会に合う店舗を確認`}/><CheckCard icon={Users} title="参加者へ共有" value="出欠と食事の配慮をグループで確認"/><CheckCard icon={CalendarDays} title="予約を確定" value="店舗へ連絡後、予定をカレンダーへ追加"/></div></div></>:<EmptyScreen icon={Lightbulb} title="店舗検索後に提案を表示します" description="条件を入力して実店舗を検索すると、候補比較と次の確認事項を整理します。" action="店舗を検索" onClick={()=>navigate("home")}/>}</section>}
+        {activeView==="suggestions"&&<section>
+          <ScreenHeading eyebrow="ENCOPA SUGGESTION" title="次に進めること" description="検索結果を確認するだけで終わらず、候補決定から参加者への共有までここから進められます。"/>
+          {searched?<>
+            <AgentInsight status={agentStatus} plan={agentPlan} error={agentError} failure={agentFailure}/>
+            <div className="mt-5 rounded-[24px] border border-[#182523]/8 bg-white p-5 sm:p-6">
+              <div className="flex flex-wrap items-end justify-between gap-3"><div><p className="text-xs font-bold tracking-[.12em] text-[#b55c38]">NEXT ACTION</p><h2 className="mt-1 text-xl font-bold">おすすめの進め方</h2></div>{chosen&&<p className="max-w-md text-sm leading-6 text-[#65716e]">現在のおすすめは「<span className="font-semibold text-[#182523]">{chosen.name}</span>」です。内容を確認して次へ進めてください。</p>}</div>
+              <div className="mt-5 grid gap-3 md:grid-cols-3"><SuggestionAction icon={Search} step="1" title="候補を比較する" value={candidates.length?`${candidates.length}件の店舗から会場を選ぶ`:"条件を変えて再検索する"} action="会場候補を開く" onClick={()=>navigate("venues")}/><SuggestionAction icon={Users} step="2" title="参加者と共有する" value={chosen?"グループを作り、出欠と食事の配慮を確認":"共有する会場を先に選んでください"} action="グループを開く" disabled={!chosen} onClick={()=>navigate("groups")}/><SuggestionAction icon={CalendarDays} step="3" title="予約前に確認する" value={chosen?"日時・人数・食事条件を確認して予定を作成":"会場選択後に確認できます"} action="最終確認へ" disabled={!chosen} onClick={()=>setApprovalOpen(true)}/></div>
+            </div>
+          </>:<EmptyScreen icon={Lightbulb} title="店舗検索後に提案を表示します" description="条件を入力して実店舗を検索すると、候補比較と次の確認事項を整理します。" action="店舗を検索" onClick={()=>navigate("home")}/>}</section>}
 
         {activeView==="history"&&<section><ScreenHeading eyebrow="HISTORY" title="プランの履歴" description="この端末で行った変更と進行状況を確認できます。"/><div className="rounded-[24px] border border-[#182523]/8 bg-white p-5 sm:p-6"><div className="space-y-1">{audit.map((item,index)=><div key={item.id} className="flex gap-4 border-b border-[#182523]/7 py-4 last:border-0"><span className={`mt-1 grid size-8 shrink-0 place-items-center rounded-full ${index===0?"bg-[#fde8df] text-[#c75534]":"bg-[#edf0ec] text-[#65716e]"}`}>{index===0?<Sparkles className="size-4"/>:<Clock3 className="size-4"/>}</span><div className="min-w-0"><div className="flex flex-wrap items-baseline gap-x-3"><p className="font-semibold">{item.label}</p>{item.at>0&&<time dateTime={new Date(item.at).toISOString()} className="text-xs tabular-nums text-[#87908d]">{new Date(item.at).toLocaleString("ja-JP",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"})}</time>}</div><p className="mt-1 text-sm leading-6 text-[#65716e]">{item.detail}</p></div></div>)}</div></div></section>}
       </div>
@@ -399,6 +411,7 @@ function ScreenHeading({eyebrow,title,description}:{eyebrow:string;title:string;
 function EmptyScreen({icon:Icon,title,description,action,onClick}:{icon:React.ElementType;title:string;description:string;action:string;onClick:()=>void}){return <div className="grid min-h-[420px] place-items-center rounded-[26px] border border-[#182523]/8 bg-white px-6 text-center shadow-[0_12px_34px_rgba(24,37,35,.05)]"><div className="max-w-md"><span className="mx-auto grid size-14 place-items-center rounded-2xl bg-[#fff0e9] text-[#d45b3f]"><Icon className="size-6"/></span><h2 className="mt-5 text-xl font-bold">{title}</h2><p className="mt-2 text-sm leading-6 text-[#65716e]">{description}</p><Button onClick={onClick} className="mt-6 rounded-xl bg-[#173f3a] px-5 text-white hover:bg-[#0e332f]">{action}<ArrowRight className="ml-2 size-4"/></Button></div></div>}
 function StatusRow({icon:Icon,title,detail,done,active}:{icon:React.ElementType;title:string;detail:string;done?:boolean;active?:boolean}){return <div className={`flex items-center gap-3 rounded-xl p-3 ${active?"bg-[#eef2ed]":""}`}><span className={`grid size-9 place-items-center rounded-xl ${done?"bg-[#dfeae2] text-[#2f6b57]":active?"bg-[#1f4b46] text-white":"bg-[#f1f0eb] text-[#8a918f]"}`}>{done?<Check className="size-4"/>:<Icon className="size-4"/>}</span><div className="min-w-0 flex-1"><p className="text-sm font-semibold">{title}</p><p className="truncate text-xs text-[#7a8380]">{detail}</p></div>{active&&<span className="size-2 rounded-full bg-[#df764a]"/>}</div>}
 function CheckCard({icon:Icon,title,value}:{icon:React.ElementType;title:string;value:string}){return <div className="rounded-2xl border border-[#1e2928]/10 bg-white p-3"><Icon className="size-4 text-[#1f4b46]"/><p className="mt-3 text-xs font-semibold">{title}</p><p className="mt-1 text-xs leading-5 text-[#77807e]">{value}</p></div>}
+function SuggestionAction({icon:Icon,step,title,value,action,onClick,disabled=false}:{icon:React.ElementType;step:string;title:string;value:string;action:string;onClick:()=>void;disabled?:boolean}){return <article className="flex min-h-60 flex-col rounded-[20px] border border-[#182523]/9 bg-[#faf9f5] p-4"><div className="flex items-center justify-between"><span className="grid size-10 place-items-center rounded-2xl bg-[#e5eee9] text-[#173f3a]"><Icon className="size-5"/></span><span className="text-xs font-black tracking-[.12em] text-[#b55c38]">STEP {step}</span></div><h3 className="mt-5 font-bold">{title}</h3><p className="mt-2 flex-1 text-sm leading-6 text-[#65716e]">{value}</p><button type="button" disabled={disabled} onClick={onClick} className="mt-5 inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-[#173f3a] px-4 text-sm font-bold text-white transition hover:bg-[#0e332f] disabled:cursor-not-allowed disabled:bg-[#d7dad6] disabled:text-[#777f7c]">{action}<ArrowRight className="size-4"/></button></article>}
 function SettingSwitch({label,description,checked,onCheckedChange}:{label:string;description:string;checked:boolean;onCheckedChange:(v:boolean)=>void}){return <div className="flex items-center justify-between gap-4 rounded-2xl border border-[#1e2928]/10 bg-white p-4"><div><p className="text-sm font-semibold">{label}</p><p className="mt-1 text-xs text-[#77807e]">{description}</p></div><Switch checked={checked} onCheckedChange={onCheckedChange}/></div>}
 function ScorePart({label,value}:{label:string;value:number}){return <div className="text-center"><p className="whitespace-nowrap text-xs text-[#73807c]">{label}</p><p className="mt-1 text-base font-black text-[#173f3a]">{value}</p></div>}
 function isCalendarDate(value:unknown):value is string {
